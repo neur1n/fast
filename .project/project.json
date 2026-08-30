@@ -1,0 +1,8 @@
+{
+  "format_version": 1,
+  "workflow": "phased-development",
+  "project": "fast",
+  "state": ".project/STATE.md",
+  "roadmap": ".project/roadmap/ROADMAP-0001.md",
+  "plan": ".project/plan/PLAN-0001-phase-0-foundation.md"
+}
