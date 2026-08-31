@@ -38,9 +38,11 @@ system by default.
   `REVIEW-0001`.
 - The manual release workflow and platform packaging steps are present; their
   end-to-end release checks remain part of Phase 3.
-- Bounded prefetch, built-in filtering, and an optional fuzzy-finder backend are
-  not yet implemented. The Phase 3 plan is proposed in
-  `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md`.
+- Built-in simple filtering was implemented in `0ed7208`. Bounded prefetch and
+  the in-process fuzzy matcher are not yet implemented. The revised Phase 3
+  plan and fuzzy-matching decision are proposed in
+  `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
+  `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
 
 ## Phase
 
@@ -74,23 +76,24 @@ system by default.
 
 ### Phase 3: Prefetch and Shell Integration
 
-- Objective: Add bounded child-directory prefetch, an always-available
-  built-in simple filter, and an optional fuzzy backend selected after baseline
-  evaluation. Verify release packaging and Nushell/Bash/Zsh wrappers, which
-  are already implemented.
-- Gate: Shell navigation, bounded prefetch, filter behavior, and platform
-  release checks pass without a mandatory external database or fuzzy-finder
-  executable.
-- Status: Phase 3 plan proposed in `PLAN-0003`; implementation awaits human
-  review and approval.
+- Objective: Add bounded child-directory prefetch and a small in-process fuzzy
+  matcher that extends the always-available built-in simple filter. Verify
+  release packaging and Nushell/Bash/Zsh wrappers, which are already
+  implemented; do not require `fzf`.
+- Gate: Shell navigation, bounded prefetch, simple and fuzzy filter behavior,
+  and platform release checks pass without a mandatory external database or
+  fuzzy-finder executable.
+- Status: Simple filter baseline is implemented; revised Phase 3 plan and
+  fuzzy-matching decision are proposed and await human review.
 - Dependency: phase-2-persistent-directory-cache
 
 ## Assumption
 
 - Rust is the proposed initial implementation language.
 - The initial browser lists directories only and does not support mouse input.
-- The default scan is shallow; prefetch is bounded and cancellable. Simple
-  filtering is built in; fuzzy matching remains optional.
+- The default scan is shallow; prefetch is bounded and cancellable. Simple and
+  fuzzy filtering are built in; external `fzf` remains out of scope for this
+  phase.
 - The initial supported character set is UTF-8 with core cross-platform path
   and link behavior only.
 - SQLite remains an implementation option; if selected, it must be bundled so

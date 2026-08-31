@@ -12,10 +12,9 @@ review: none
 ## Objective
 
 Complete Phase 3 with bounded cancellable child-directory prefetch, an
-always-available built-in simple filter, an optional fuzzy backend selected
-after evaluating the built-in and `fzf` options, and verified shell/release
-integration. The standalone binary, current cache contract, and shallow scan
-behavior remain the defaults.
+always-available built-in simple filter, a small in-process fuzzy matcher, and
+verified shell/release integration. The standalone binary, current cache
+contract, and shallow scan behavior remain the defaults.
 
 ## Scope
 
@@ -27,14 +26,15 @@ behavior remain the defaults.
 - Included: a visible-entry mapping that keeps the complete scan result in
   memory and in the cache; filtering must not mutate the authoritative
   `entries` collection.
-- Included: an evaluation gate for an optional fuzzy backend. After the simple
-  filter is stable, select either a small in-process fuzzy implementation or an
-  external `fzf` backend based on dependency, binary-size, platform, terminal,
-  and fallback costs.
+- Included: a small in-process fuzzy matcher in the existing filter module and
+  TUI, reusing the current query input and visible-entry model without an
+  external process or mandatory runtime dependency.
 - Included: Bash, Zsh, and Nushell wrapper verification and end-to-end checks
   for the existing platform release workflow.
 - Excluded: a mandatory `fzf` executable, a mandatory external database,
   recursive indexing, file browsing, previews, mouse input, and content search.
+- Excluded: interactive or non-interactive `fzf` integration and `fzf`-specific
+  process or terminal handling.
 - Excluded: cache format changes unless a separately reviewed decision makes
   them necessary.
 
@@ -42,6 +42,9 @@ behavior remain the defaults.
 
 - The simple filter works without any external executable or new mandatory
   runtime dependency.
+- Fuzzy matching runs in the existing TUI, requires query characters to appear
+  in order, uses documented case-insensitive matching and score rules, and has
+  stable tie-breaking covered by tests.
 - The `..` entry remains available for parent navigation, and confirming with
   no visible entry cannot accidentally select the current directory.
 - Selection, scrolling, incremental scan chunks, cache hits, and directory
@@ -51,30 +54,27 @@ behavior remain the defaults.
   cached data is unaffected by the active query.
 - Prefetch has explicit queue/concurrency and work bounds, stops on navigation
   cancellation, and cannot make the UI wait for recursive work.
-- An optional fuzzy backend, if selected, is unavailable-safe: the built-in
-  simple filter remains usable when `fzf` is missing or the optional backend is
-  disabled.
+- Fuzzy matching does not require `fzf`, and the built-in simple filter remains
+  available as the predictable baseline.
 - Shell navigation and the supported release targets pass their verification
   checks without requiring an external database or fuzzy-finder executable.
 
 ## Step
 
-1. Record the filter input semantics and prefetch limits before implementation;
-   keep the simple filter as the mandatory baseline and the fuzzy backend as a
-   later, reviewable choice.
+1. Record the fuzzy matching contract and prefetch limits before implementation;
+   keep the simple filter as the mandatory baseline and cap fuzzy scoring at a
+   small, testable in-process algorithm.
 2. Keep `entries` authoritative, add a small filter module and visible-index
    state, and update input handling, selection, scrolling, rendering, and
    incremental scan restoration. Add unit tests for matching, query editing,
    empty results, parent navigation, and selection stability.
-3. Add bounded child-directory prefetch using cancellable work and the existing
+3. Extend the filter module with the in-process fuzzy matcher after the simple
+   baseline is stable. Preserve stable score ties, selected paths, parent
+   navigation, and the complete unfiltered cache data. Do not add `fzf` process
+   handling in this phase.
+4. Add bounded child-directory prefetch using cancellable work and the existing
    cache as an optimization. Test bounds, cancellation, cache interaction, and
    the absence of implicit recursive indexing.
-4. Measure the simple-filter baseline and evaluate the in-process fuzzy and
-   external `fzf` alternatives. Record the selected backend in a separate
-   reviewed decision before adding backend-specific dependencies or process
-   handling. If `fzf` is selected, invoke it outside raw mode and the alternate
-   screen through direct process arguments, with cancellation and fallback
-   behavior covered by tests.
 5. Verify the Bash, Zsh, and Nushell selection protocol, platform release
    packaging, and documented installation paths. Keep release checks aligned
    with the existing manual workflow.
@@ -84,16 +84,14 @@ behavior remain the defaults.
 ## Affected File Or Interface
 
 - `src/main.rs`
-- `src/filter.rs` (new)
+- `src/filter.rs`
 - `src/scan.rs` or a dedicated prefetch module
-- `Cargo.toml` and `Cargo.lock` only if the selected fuzzy backend requires a
-  dependency
 - `shell/fast.bash`
 - `shell/fast.zsh`
 - `shell/fast.nu`
 - `README.md`
 - `.github/workflows/manual-release.yml`
-- `.project/decision/` if a fuzzy backend is selected
+- `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`
 
 ## Risk And Reversibility
 
@@ -102,9 +100,9 @@ behavior remain the defaults.
   be selected; empty-result and path-restoration tests are required.
 - Prefetch can consume threads, descriptors, and I/O unexpectedly; explicit
   bounds, cancellation, and no-recursion tests keep it reversible.
-- Fuzzy ranking can reorder results and an external `fzf` process can disturb
-  terminal state or be absent. The simple filter remains the fallback, and an
-  external backend must be isolated from the core TUI lifecycle.
+- A custom fuzzy scorer can become difficult to maintain if it tries to match a
+  mature external tool feature-for-feature. A deliberately small contract,
+  stable tie-breaking, and focused scoring tests keep the behavior reversible.
 - Unicode and platform path behavior remain subject to the initial UTF-8 scope;
   backend-specific path transport must not weaken the existing NUL-terminated
   selection protocol.
@@ -117,6 +115,8 @@ behavior remain the defaults.
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo test`
 - `git diff --check`
+- Verify fuzzy score ordering, stable ties, case handling, empty results, and
+  incremental scan updates without spawning an external process.
 - Exercise the three shell wrappers with successful selection, cancellation,
   missing executable, and paths containing whitespace/newlines where supported
   by the current UTF-8 contract.
@@ -125,4 +125,6 @@ behavior remain the defaults.
 
 ## Completion Evidence
 
-- To be filled after implementation, verification, and human gate review.
+- Built-in simple filtering was implemented and committed in `0ed7208`.
+- Fuzzy matching, bounded prefetch, and the remaining Phase 3 gate evidence are
+  pending.
