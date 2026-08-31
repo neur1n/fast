@@ -7,15 +7,19 @@ shell working directory.
 
 ## Status
 
-The Phase 1 navigator is implemented. It starts in the current directory,
-lists direct child directories, scans them in cancellable chunks, and keeps the
-terminal responsive while indexing is in progress.
+The Phase 2 navigator is implemented. It starts in the current directory,
+lists direct child directories, uses a persistent fingerprinted cache for
+visited directories, and falls back to cancellable chunked scanning when the
+cache is missing or stale. Cache failures do not prevent navigation.
 
 ## Run
 
 ```sh
 cargo run
 ```
+
+Set `FAST_CACHE_DIR` to override the platform cache directory, for example when
+testing cache behavior in an isolated directory.
 
 Use the arrow keys or `j`/`k` to move, `Enter` or `l` to open a directory,
 `Backspace` or `h` to go to its parent, `r` to rescan, `q` to select the

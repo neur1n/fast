@@ -1,3 +1,4 @@
+mod cache;
 mod scan;
 
 use std::{
@@ -20,6 +21,7 @@ use crossterm::{
   },
 };
 
+use cache::{DirectoryCache, DirectoryFingerprint};
 use scan::{DirectoryEntry, ScanEvent, ScanHandle};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -28,7 +30,9 @@ struct App {
   current_dir: PathBuf,
   entries: Vec<DirectoryEntry>,
   selected: usize,
+  cache: Option<DirectoryCache>,
   scan: Option<ScanHandle>,
+  scan_fingerprint: Option<DirectoryFingerprint>,
   status: ScanStatus,
 }
 
@@ -51,11 +55,17 @@ enum CliError {
 
 impl App {
   fn new(current_dir: PathBuf) -> Self {
+    Self::with_cache(current_dir, DirectoryCache::system())
+  }
+
+  fn with_cache(current_dir: PathBuf, cache: Option<DirectoryCache>) -> Self {
     let mut app = Self {
       current_dir,
       entries: Vec::new(),
       selected: 0,
+      cache,
       scan: None,
+      scan_fingerprint: None,
       status: ScanStatus::Indexing,
     };
     app.start_scan();
@@ -159,12 +169,15 @@ impl App {
         self.restore_selection(selected_path.as_deref());
       }
       ScanEvent::Finished => {
+        self.persist_scan();
         self.status = ScanStatus::Ready;
         self.scan = None;
+        self.scan_fingerprint = None;
       }
       ScanEvent::Error(error) => {
         self.status = ScanStatus::Error(error);
         self.scan = None;
+        self.scan_fingerprint = None;
       }
     }
   }
@@ -176,6 +189,20 @@ impl App {
     self.status = ScanStatus::Indexing;
     self.sort_entries();
 
+    if let Some(cache) = self.cache.as_ref()
+      && let Ok(Some(entries)) = cache.load(&self.current_dir)
+    {
+      self.entries.extend(entries);
+      self.sort_entries();
+      self.status = ScanStatus::Ready;
+      return;
+    }
+
+    self.scan_fingerprint = self
+      .cache
+      .as_ref()
+      .and_then(|_| DirectoryCache::fingerprint(&self.current_dir).ok());
+
     match ScanHandle::start(self.current_dir.clone()) {
       Ok(scan) => self.scan = Some(scan),
       Err(error) => self.status = ScanStatus::Error(format!("unable to start scanner: {error}")),
@@ -183,9 +210,18 @@ impl App {
   }
 
   fn stop_scan(&mut self) {
+    self.scan_fingerprint = None;
     if let Some(scan) = self.scan.take() {
       scan.cancel();
     }
+  }
+
+  fn persist_scan(&self) {
+    let (Some(cache), Some(before)) = (self.cache.as_ref(), self.scan_fingerprint.as_ref()) else {
+      return;
+    };
+    let parent_count = self.parent_count();
+    let _ = cache.store_if_unchanged(&self.current_dir, before, &self.entries[parent_count..]);
   }
 
   fn open_selected(&mut self) {
@@ -528,7 +564,9 @@ mod tests {
         path: selected_path.clone(),
       }],
       selected: 0,
+      cache: None,
       scan: None,
+      scan_fingerprint: None,
       status: ScanStatus::Ready,
     };
 
@@ -537,5 +575,46 @@ mod tests {
       Some(ExitAction::Select(path)) => assert_eq!(path, selected_path),
       _ => panic!("q should select the highlighted entry"),
     }
+  }
+
+  #[test]
+  fn uses_a_valid_cache_before_starting_a_scan() {
+    let root = std::env::temp_dir().join(format!(
+      "fast-app-cache-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    let directory = root.join("workspace");
+    let cache = DirectoryCache::new(root.join("cache"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let child = directory.join("child");
+    std::fs::create_dir(&child).unwrap();
+    let entries = vec![DirectoryEntry {
+      name: "child".to_owned(),
+      path: child,
+    }];
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    assert!(
+      cache
+        .store_if_unchanged(&directory, &fingerprint, &entries)
+        .unwrap()
+    );
+
+    let app = App::with_cache(directory, Some(cache));
+
+    assert!(matches!(app.status, ScanStatus::Ready));
+    assert!(app.scan.is_none());
+    assert_eq!(
+      app
+        .entries
+        .iter()
+        .filter(|entry| entry.name == "child")
+        .count(),
+      1
+    );
+    let _ = std::fs::remove_dir_all(root);
   }
 }
