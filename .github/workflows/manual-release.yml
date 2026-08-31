@@ -1,0 +1,210 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Prerelease tag, for example v0.1.0-dev.1"
+        required: true
+        type: string
+
+concurrency:
+  group: manual-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate tag format
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must look like v0.1.0 or v0.1.0-dev.1"
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu.2.28
+            rust_target: x86_64-unknown-linux-gnu
+            asset_target: x86_64-unknown-linux-gnu-glibc-2.28
+            builder: zig
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu.2.28
+            rust_target: aarch64-unknown-linux-gnu
+            asset_target: aarch64-unknown-linux-gnu-glibc-2.28
+            builder: zig
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            rust_target: x86_64-unknown-linux-musl
+            asset_target: x86_64-unknown-linux-musl
+            builder: zig
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-musl
+            rust_target: aarch64-unknown-linux-musl
+            asset_target: aarch64-unknown-linux-musl
+            builder: zig
+          - os: macos-15
+            target: aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+            asset_target: aarch64-apple-darwin
+            builder: cargo
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            rust_target: x86_64-pc-windows-msvc
+            asset_target: x86_64-pc-windows-msvc
+            builder: cargo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Zig
+        if: matrix.builder == 'zig'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        if: matrix.builder == 'zig'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build release binary
+        if: matrix.builder == 'zig'
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: cargo zigbuild --locked --release --target "$BUILD_TARGET"
+
+      - name: Build native release binary
+        if: matrix.builder == 'cargo'
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+
+      - name: Verify GNU glibc baseline
+        if: endsWith(matrix.target, '.2.28')
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$(find target -type f -path '*/release/fast' -print -quit)"
+          versions="$(readelf -W --version-info "$binary" | sed -n 's/.*Name: GLIBC_\([0-9.]*\).*/\1/p')"
+          highest="$(printf '%s\n' "$versions" | sort -V | tail -n 1)"
+          if [[ -z "$highest" ]]; then
+            echo "Could not determine the binary's GLIBC requirement"
+            exit 1
+          fi
+          if [[ "$(printf '%s\n' "$highest" '2.28' | sort -V | tail -n 1)" != "2.28" ]]; then
+            echo "Binary requires GLIBC_$highest, which is newer than GLIBC_2.28"
+            exit 1
+          fi
+          echo "Highest required GLIBC version: $highest"
+
+      - name: Package Unix artifact
+        if: runner.os != 'Windows'
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          ASSET_TARGET: ${{ matrix.asset_target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$(find target -type f -path '*/release/fast' -print -quit)"
+          if [[ -z "$binary" ]]; then
+            echo "Release binary was not found"
+            exit 1
+          fi
+          package="fast-${RELEASE_TAG}-${ASSET_TARGET}"
+          package_dir="package/${package}"
+          mkdir -p "$package_dir"
+          cp "$binary" "$package_dir/fast"
+          cp README.md LICENSE "$package_dir/"
+          cp -R shell "$package_dir/shell"
+          tar -czf "${package}.tar.gz" -C package "$package"
+
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+          ASSET_TARGET: ${{ matrix.asset_target }}
+        shell: pwsh
+        run: |
+          $package = "fast-$env:RELEASE_TAG-$env:ASSET_TARGET"
+          $packageDir = Join-Path "package" $package
+          $releaseDir = Join-Path (Join-Path "target" $env:TARGET) "release"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item (Join-Path $releaseDir "fast.exe") (Join-Path $packageDir "fast.exe")
+          Copy-Item "README.md" $packageDir
+          Copy-Item "LICENSE" $packageDir
+          Copy-Item "shell" (Join-Path $packageDir "shell") -Recurse
+          Compress-Archive -Path $packageDir -DestinationPath "$package.zip" -Force
+
+      - name: Upload Unix artifact
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-${{ matrix.asset_target }}
+          path: fast-${{ inputs.tag }}-${{ matrix.asset_target }}.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-${{ matrix.asset_target }}
+          path: fast-${{ inputs.tag }}-${{ matrix.asset_target }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Create prerelease
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fast-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "fast $RELEASE_TAG" \
+            --prerelease \
+            --generate-notes
