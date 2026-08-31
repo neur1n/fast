@@ -36,8 +36,11 @@ system by default.
 - Phase 2 persistent caching was committed in `882c4ac` with candidate tree
   `bd4b10ed717f89585ba24b54daef9f50afab51b5`; its gate was accepted in
   `REVIEW-0001`.
-- Bounded prefetch, optional fuzzy-finder backends, and release packaging are
-  not yet implemented.
+- The manual release workflow and platform packaging steps are present; their
+  end-to-end release checks remain part of Phase 3.
+- Bounded prefetch, built-in filtering, and an optional fuzzy-finder backend are
+  not yet implemented. The Phase 3 plan is proposed in
+  `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md`.
 
 ## Phase
 
@@ -71,19 +74,23 @@ system by default.
 
 ### Phase 3: Prefetch and Shell Integration
 
-- Objective: Add bounded child-directory prefetch, optional fuzzy-finder
-  backends, and release packaging. Nushell/Bash/Zsh wrappers are already
-  implemented; their compatibility verification remains part of this phase.
-- Gate: Shell navigation and platform release checks pass without a mandatory
-  external database or CLI.
-- Status: Next phase; its implementation plan is not yet recorded.
+- Objective: Add bounded child-directory prefetch, an always-available
+  built-in simple filter, and an optional fuzzy backend selected after baseline
+  evaluation. Verify release packaging and Nushell/Bash/Zsh wrappers, which
+  are already implemented.
+- Gate: Shell navigation, bounded prefetch, filter behavior, and platform
+  release checks pass without a mandatory external database or fuzzy-finder
+  executable.
+- Status: Phase 3 plan proposed in `PLAN-0003`; implementation awaits human
+  review and approval.
 - Dependency: phase-2-persistent-directory-cache
 
 ## Assumption
 
 - Rust is the proposed initial implementation language.
 - The initial browser lists directories only and does not support mouse input.
-- The default scan is shallow; prefetch is bounded and cancellable.
+- The default scan is shallow; prefetch is bounded and cancellable. Simple
+  filtering is built in; fuzzy matching remains optional.
 - The initial supported character set is UTF-8 with core cross-platform path
   and link behavior only.
 - SQLite remains an implementation option; if selected, it must be bundled so
