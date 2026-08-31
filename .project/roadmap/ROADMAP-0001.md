@@ -1,6 +1,6 @@
 ---
 id: ROADMAP-0001
-status: proposed
+status: active
 project: fast
 supersedes: none
 review: none
@@ -33,8 +33,11 @@ system by default.
   `07fdac4`.
 - Bash, Zsh, and Nushell shell wrappers were delivered with the Phase 1
   implementation.
-- Persistent caching, bounded prefetch, optional fuzzy-finder backends, and
-  release packaging are not yet implemented.
+- Phase 2 persistent caching was committed in `882c4ac` with candidate tree
+  `bd4b10ed717f89585ba24b54daef9f50afab51b5`; its gate was accepted in
+  `REVIEW-0001`.
+- Bounded prefetch, optional fuzzy-finder backends, and release packaging are
+  not yet implemented.
 
 ## Phase
 
@@ -63,8 +66,7 @@ system by default.
   fingerprint validation and bounded storage.
 - Gate: Cache hits, invalidation, corruption, concurrent writers, and scan
   races have automated coverage.
-- Status: Next phase; the implementation plan and cache backend decision are
-  pending review.
+- Status: Completed in `882c4ac`; the phase gate was accepted in `REVIEW-0001`.
 - Dependency: phase-1-minimal-navigator
 
 ### Phase 3: Prefetch and Shell Integration
@@ -74,7 +76,7 @@ system by default.
   implemented; their compatibility verification remains part of this phase.
 - Gate: Shell navigation and platform release checks pass without a mandatory
   external database or CLI.
-- Status: Not started.
+- Status: Next phase; its implementation plan is not yet recorded.
 - Dependency: phase-2-persistent-directory-cache
 
 ## Assumption

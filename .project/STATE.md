@@ -2,18 +2,18 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; governance review pending
+- Status: active; Phase 2 accepted, Phase 3 pending
 - Last reconciled: 2026-08-31
 - Roadmap: .project/roadmap/ROADMAP-0001.md
-- Current phase: phase-2-persistent-directory-cache
-- Current plan: none; Phase 2 plan is not yet recorded
+- Current phase: phase-3-prefetch-and-shell-integration
+- Current plan: none; Phase 3 plan is not yet recorded
 - Current issue: none
 
 ## Current Objective
 
-Move from the implemented Phase 1 directory navigator to a reviewed Phase 2
-cache contract and a persistent directory cache without making an external
-database or fuzzy-finder executable mandatory.
+Prepare a reviewed Phase 3 plan for bounded prefetch, optional fuzzy-finder
+backends, and release packaging without making an external database or
+fuzzy-finder executable mandatory.
 
 ## Last Completed
 
@@ -22,18 +22,23 @@ database or fuzzy-finder executable mandatory.
   in `07fdac4`.
 - Added Bash, Zsh, and Nushell shell wrappers as part of the Phase 1 delivery.
 - Added the project license in `4b93648`.
+- Implemented the Phase 2 versioned directory cache with fingerprint validation,
+  atomic replacement, scan-race protection, and bounded storage.
+- Added cache integration and automated coverage for hits, invalidation,
+  corruption, replacement, concurrent writers, scan races, and storage bounds.
+- Committed the Phase 2 implementation in `882c4ac` and accepted candidate tree
+  `bd4b10ed717f89585ba24b54daef9f50afab51b5` in `REVIEW-0001`.
 
 ## Next Action
 
-- Draft and review a Phase 2 plan covering the cache contract, storage backend,
-  invalidation fingerprint, atomic writes, and bounded storage.
+- Draft and review a Phase 3 plan covering bounded prefetch, optional
+  fuzzy-finder backends, release packaging, and shell-wrapper verification.
 
 ## Blocker
 
-- Phase 2 implementation must wait for its plan and cache backend decision to
-  be reviewed under the phased-development workflow.
+- Phase 3 cannot start until its plan is recorded and reviewed under the
+  phased-development workflow.
 
 ## Pending Human Action
 
-- Review the reconciled roadmap and the existing Phase 1 implementation, then
-  approve the Phase 2 plan and its cache backend decision.
+- Review and approve the Phase 3 plan before implementation begins.
