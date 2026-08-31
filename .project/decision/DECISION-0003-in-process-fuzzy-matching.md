@@ -1,6 +1,6 @@
 ---
 id: DECISION-0003
-status: proposed
+status: accepted
 date: 2026-08-31
 supersedes: none
 review: none

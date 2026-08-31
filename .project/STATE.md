@@ -2,7 +2,7 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; Phase 2 accepted, Phase 3 plan and fuzzy decision proposed
+- Status: active; Phase 2 accepted, Phase 3 implementation in progress
 - Last reconciled: 2026-08-31
 - Roadmap: .project/roadmap/ROADMAP-0001.md
 - Current phase: phase-3-prefetch-and-shell-integration
@@ -32,19 +32,20 @@ database or fuzzy-finder executable mandatory.
 - Added the manual release workflow and corrected the release package folder
   naming in `0f1cd25` and `78f8256`.
 - Implemented and committed the built-in simple directory filter in `0ed7208`.
+- Implemented and committed the in-process fuzzy directory filter in `df00d64`;
+  the test suite passes 29 tests.
 
 ## Next Action
 
-- Review and approve the revised `PLAN-0003` and `DECISION-0003` before fuzzy
-  matching implementation begins.
+- Implement bounded child-directory prefetch and complete wrapper/release
+  verification, then prepare the Phase 3 implementation gate review.
 
 ## Blocker
 
-- Fuzzy matching implementation cannot start until the revised plan and
-  decision are reviewed and approved under the phased-development workflow.
+- Phase 3 gate review remains pending until bounded prefetch and wrapper/release
+  verification are complete.
 
 ## Pending Human Action
 
-- Review and approve `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md`
-  and `.project/decision/DECISION-0003-in-process-fuzzy-matching.md` before
-  fuzzy matching implementation begins.
+- Review the complete Phase 3 implementation candidate after prefetch and
+  wrapper/release verification are complete.

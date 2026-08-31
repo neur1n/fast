@@ -1,6 +1,6 @@
 ---
 id: PLAN-0003
-status: proposed
+status: active
 roadmap: ROADMAP-0001
 phase: phase-3-prefetch-and-shell-integration
 issue: []
@@ -126,5 +126,7 @@ contract, and shallow scan behavior remain the defaults.
 ## Completion Evidence
 
 - Built-in simple filtering was implemented and committed in `0ed7208`.
-- Fuzzy matching, bounded prefetch, and the remaining Phase 3 gate evidence are
-  pending.
+- In-process fuzzy matching was implemented and committed in `df00d64`; the
+  implementation uses no new dependency and the test suite passes 29 tests.
+- Bounded prefetch, wrapper and release verification, and the remaining Phase 3
+  gate evidence are pending.

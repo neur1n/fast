@@ -38,9 +38,10 @@ system by default.
   `REVIEW-0001`.
 - The manual release workflow and platform packaging steps are present; their
   end-to-end release checks remain part of Phase 3.
-- Built-in simple filtering was implemented in `0ed7208`. Bounded prefetch and
-  the in-process fuzzy matcher are not yet implemented. The revised Phase 3
-  plan and fuzzy-matching decision are proposed in
+- Built-in simple filtering was implemented in `0ed7208`, and the in-process
+  fuzzy matcher was implemented in `df00d64` with 29 passing tests. Bounded
+  prefetch and the remaining wrapper/release checks are not yet complete. The
+  active Phase 3 plan and accepted fuzzy-matching decision are recorded in
   `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
   `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
 
@@ -83,8 +84,8 @@ system by default.
 - Gate: Shell navigation, bounded prefetch, simple and fuzzy filter behavior,
   and platform release checks pass without a mandatory external database or
   fuzzy-finder executable.
-- Status: Simple filter baseline is implemented; revised Phase 3 plan and
-  fuzzy-matching decision are proposed and await human review.
+- Status: Simple and fuzzy filter baselines are implemented; bounded prefetch,
+  wrapper/release verification, and the Phase 3 gate review remain.
 - Dependency: phase-2-persistent-directory-cache
 
 ## Assumption
