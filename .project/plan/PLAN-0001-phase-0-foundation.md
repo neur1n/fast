@@ -1,6 +1,6 @@
 ---
 id: PLAN-0001
-status: proposed
+status: implemented
 roadmap: ROADMAP-0001
 phase: phase-0-foundation
 issue: []
@@ -24,13 +24,14 @@ phased-development workflow.
 
 ## Step
 
-1. Human initializes the repository with `main` and reviews the candidate
-   foundation.
-2. Human stages and commits the approved foundation according to the
-   phased-development workflow.
-3. Before Phase 1 implementation, confirm the terminal backend, cache storage
-   backend, and minimum supported toolchain through a separate reviewed plan or
-   decision record.
+1. The repository was initialized with `main` and the foundation was committed
+   in `e754b31`.
+2. The foundation files were committed; a formal exact-tree review is not
+   recorded in the governance records.
+3. Before Phase 2 implementation, confirm the cache storage backend and cache
+   contract through a separate reviewed plan or decision record. Phase 1 uses
+   `crossterm`, but that backend choice has not been recorded as a reviewed
+   decision.
 
 ## Affected File Or Interface
 
@@ -67,4 +68,6 @@ phased-development workflow.
 
 ## Completion Evidence
 
-- Pending human review and first commit.
+- Foundation files are present in commit `e754b31` from 2026-08-30.
+- The subsequent Phase 1 implementation commit `07fdac4` confirms that
+  application work has started; that work is outside this plan's scope.

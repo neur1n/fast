@@ -25,6 +25,17 @@ system by default.
 - Release artifacts target Linux x86_64/aarch64, macOS arm64, and Windows
   x86_64.
 
+## Current Progress
+
+- Phase 0 foundation is committed in `e754b31`; its formal exact-tree review
+  is not recorded.
+- Phase 1 navigation and cancellable chunked scanning are implemented in
+  `07fdac4`.
+- Bash, Zsh, and Nushell shell wrappers were delivered with the Phase 1
+  implementation.
+- Persistent caching, bounded prefetch, optional fuzzy-finder backends, and
+  release packaging are not yet implemented.
+
 ## Phase
 
 ### Phase 0: Foundation and Contract
@@ -33,6 +44,8 @@ system by default.
   review workflow.
 - Gate: Human initializes the repository with `main`, reviews the candidate
   tree, and commits the approved foundation.
+- Status: The repository and foundation commit exist, but the formal review is
+  not recorded in the governance records.
 - Dependency: none
 
 ### Phase 1: Minimal Navigator
@@ -41,6 +54,7 @@ system by default.
   scanning, cancellation, and an indexing indicator.
 - Gate: The first screen is available during a cold scan and the UI remains
   responsive while the scan continues.
+- Status: Implemented in `07fdac4`; the phase gate review is not recorded.
 - Dependency: phase-0-foundation
 
 ### Phase 2: Persistent Directory Cache
@@ -49,14 +63,18 @@ system by default.
   fingerprint validation and bounded storage.
 - Gate: Cache hits, invalidation, corruption, concurrent writers, and scan
   races have automated coverage.
+- Status: Next phase; the implementation plan and cache backend decision are
+  pending review.
 - Dependency: phase-1-minimal-navigator
 
 ### Phase 3: Prefetch and Shell Integration
 
-- Objective: Add bounded child-directory prefetch, Nushell/Bash/Zsh wrappers,
-  optional fuzzy-finder backends, and release packaging.
+- Objective: Add bounded child-directory prefetch, optional fuzzy-finder
+  backends, and release packaging. Nushell/Bash/Zsh wrappers are already
+  implemented; their compatibility verification remains part of this phase.
 - Gate: Shell navigation and platform release checks pass without a mandatory
   external database or CLI.
+- Status: Not started.
 - Dependency: phase-2-persistent-directory-cache
 
 ## Assumption
