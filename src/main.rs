@@ -23,7 +23,7 @@ use crossterm::{
 };
 
 use cache::{DirectoryCache, DirectoryFingerprint};
-use filter::matching_indices;
+use filter::{FilterKind, fuzzy_indices, matching_indices};
 use scan::{DirectoryEntry, ScanEvent, ScanHandle};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -34,6 +34,7 @@ struct App {
   visible_indices: Vec<usize>,
   selected: usize,
   filter_query: String,
+  filter_kind: FilterKind,
   filter_mode: bool,
   cache: Option<DirectoryCache>,
   scan: Option<ScanHandle>,
@@ -70,6 +71,7 @@ impl App {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache,
       scan: None,
@@ -166,6 +168,13 @@ impl App {
         self.filter_mode = false;
         None
       }
+      KeyCode::Tab => {
+        let selected_path = self.selected_path();
+        self.filter_kind = self.filter_kind.toggle();
+        self.refresh_visible();
+        self.restore_selection(selected_path.as_deref());
+        None
+      }
       KeyCode::Backspace => {
         let mut query = self.filter_query.clone();
         query.pop();
@@ -256,6 +265,7 @@ impl App {
     self.visible_indices.clear();
     self.selected = 0;
     self.filter_query.clear();
+    self.filter_kind = FilterKind::Substring;
     self.filter_mode = false;
     self.status = ScanStatus::Indexing;
     self.sort_entries();
@@ -340,7 +350,10 @@ impl App {
   }
 
   fn refresh_visible(&mut self) {
-    self.visible_indices = matching_indices(&self.entries, &self.filter_query);
+    self.visible_indices = match self.filter_kind {
+      FilterKind::Substring => matching_indices(&self.entries, &self.filter_query),
+      FilterKind::Fuzzy => fuzzy_indices(&self.entries, &self.filter_query),
+    };
     self.selected = self
       .selected
       .min(self.visible_indices.len().saturating_sub(1));
@@ -438,12 +451,17 @@ impl App {
       ScanStatus::Error(error) => format!(" Error  {error}"),
     };
     if self.filter_mode {
-      format!("{status}  Filter: {}_", self.filter_query)
+      format!(
+        "{status}  Filter ({}): {}_",
+        self.filter_kind.label(),
+        self.filter_query
+      )
     } else if self.filter_query.is_empty() {
       status
     } else {
       format!(
-        "{status}  Filter: {} ({} visible)",
+        "{status}  Filter ({}): {} ({} visible)",
+        self.filter_kind.label(),
         self.filter_query,
         self.visible_indices.len()
       )
@@ -465,12 +483,13 @@ impl App {
 
   fn footer_text(&self) -> String {
     if self.filter_mode {
-      " Type to filter  Backspace edit  Enter keep  Esc clear  Ctrl-C cancel".to_owned()
+      " Type to filter  Tab toggle mode  Backspace edit  Enter keep  Esc clear  Ctrl-C cancel"
+        .to_owned()
     } else if self.filter_query.is_empty() {
       " / filter  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc cancel"
         .to_owned()
     } else {
-      " / edit filter  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc clear"
+      " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc clear"
         .to_owned()
     }
   }
@@ -635,7 +654,7 @@ fn print_help() {
   println!("  --select PATH  write the selected directory on confirmation");
   println!();
   println!("  q          select the highlighted directory");
-  println!("  /          filter directory names");
+  println!("  /          filter names (Tab toggles simple/fuzzy)");
   println!("  Esc/Ctrl-C  cancel without selecting a directory");
 }
 
@@ -683,6 +702,7 @@ mod tests {
       visible_indices: vec![0],
       selected: 0,
       filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache: None,
       scan: None,
@@ -719,6 +739,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache: None,
       scan: None,
@@ -751,6 +772,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache: None,
       scan: None,
@@ -787,6 +809,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 1,
       filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache: None,
       scan: None,
@@ -818,6 +841,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache: None,
       scan: None,
@@ -830,9 +854,14 @@ mod tests {
     app.handle_key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
 
     assert!(app.filter_mode);
     assert_eq!(app.filter_query, "T");
+    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
+    assert_eq!(app.visible_indices, vec![0]);
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.filter_kind, FilterKind::Substring);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(!app.filter_mode);
     assert_eq!(app.filter_query, "T");
@@ -868,6 +897,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 1,
       filter_query: "a".to_owned(),
+      filter_kind: FilterKind::Substring,
       filter_mode: false,
       cache: None,
       scan: None,
