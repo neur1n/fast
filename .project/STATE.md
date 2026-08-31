@@ -34,6 +34,9 @@ database or fuzzy-finder executable mandatory.
 - Implemented and committed the built-in simple directory filter in `0ed7208`.
 - Implemented and committed the in-process fuzzy directory filter in `df00d64`;
   the test suite passes 29 tests.
+- Reorganized the binary into a small `main.rs` entrypoint plus dedicated app,
+  CLI, and terminal modules in `a27a411`; the approved refactor is recorded in
+  `REVIEW-0002` and the 29-test suite remains passing.
 
 ## Next Action
 

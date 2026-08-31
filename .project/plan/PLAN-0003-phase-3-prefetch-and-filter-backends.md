@@ -84,6 +84,9 @@ contract, and shallow scan behavior remain the defaults.
 ## Affected File Or Interface
 
 - `src/main.rs`
+- `src/app.rs`
+- `src/cli.rs`
+- `src/terminal.rs`
 - `src/filter.rs`
 - `src/scan.rs` or a dedicated prefetch module
 - `shell/fast.bash`
@@ -128,5 +131,9 @@ contract, and shallow scan behavior remain the defaults.
 - Built-in simple filtering was implemented and committed in `0ed7208`.
 - In-process fuzzy matching was implemented and committed in `df00d64`; the
   implementation uses no new dependency and the test suite passes 29 tests.
+- The binary source organization was refactored and committed in `a27a411`:
+  `main.rs` is now a small entrypoint, while application, CLI, and terminal
+  code are separated into dedicated modules. The refactor preserves the 29-test
+  passing suite and is recorded in `REVIEW-0002`.
 - Bounded prefetch, wrapper and release verification, and the remaining Phase 3
   gate evidence are pending.

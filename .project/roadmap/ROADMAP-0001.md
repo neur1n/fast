@@ -41,7 +41,10 @@ system by default.
 - Built-in simple filtering was implemented in `0ed7208`, and the in-process
   fuzzy matcher was implemented in `df00d64` with 29 passing tests. Bounded
   prefetch and the remaining wrapper/release checks are not yet complete. The
-  active Phase 3 plan and accepted fuzzy-matching decision are recorded in
+  binary source was reorganized into dedicated application, CLI, and terminal
+  modules in `a27a411`, with the entrypoint reduced to top-level orchestration;
+  that approved refactor is recorded in `REVIEW-0002`. The active Phase 3 plan
+  and accepted fuzzy-matching decision are recorded in
   `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
   `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
 
