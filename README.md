@@ -2,13 +2,68 @@
 
 FAST is a Shell Traverser.
 
-`fast` is planned as a small, cross-platform TUI for browsing directories and
-changing the shell working directory.
+`fast` is a small, cross-platform TUI for browsing directories and changing the
+shell working directory.
 
 ## Status
 
-The project currently contains its governance and formatting foundation. The
-application implementation has not started.
+The Phase 1 navigator is implemented. It starts in the current directory,
+lists direct child directories, scans them in cancellable chunks, and keeps the
+terminal responsive while indexing is in progress.
+
+## Run
+
+```sh
+cargo run
+```
+
+Use the arrow keys or `j`/`k` to move, `Enter` or `l` to open a directory,
+`Backspace` or `h` to go to its parent, `r` to rescan, `q` to select the
+highlighted directory, and `Esc` to cancel.
+
+## Shell Integration
+
+Install the binary so the wrappers can find `fast`:
+
+```sh
+cargo install --path .
+```
+
+If Cargo's binary directory is not already in `PATH`, add it before using the
+wrapper:
+
+```sh
+# Bash/Zsh
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# Nushell
+$env.PATH = ($env.PATH | prepend ($nu.home-dir | path join ".cargo" "bin"))
+```
+
+For a local checkout without installing, build the binary and set `FAST_BIN`:
+
+```sh
+cargo build
+export FAST_BIN="$PWD/target/debug/fast"  # Bash/Zsh
+# Nushell: $env.FAST_BIN = (pwd | path join "target" "debug" "fast")
+```
+
+Source the matching wrapper in the shell where the directory should change:
+
+```sh
+# Bash
+source /path/to/fast/shell/fast.bash
+
+# Zsh
+source /path/to/fast/shell/fast.zsh
+
+# Nushell
+source /path/to/fast/shell/fast.nu
+```
+
+Run `fast` from that shell. The wrapper keeps the TUI attached to the terminal,
+then changes the parent shell's directory after `q` confirms the highlighted selection.
+`Esc` or `Ctrl-C` leaves the directory unchanged.
 
 ## Initial Scope
 
