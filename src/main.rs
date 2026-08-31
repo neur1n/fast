@@ -1,4 +1,5 @@
 mod cache;
+mod filter;
 mod scan;
 
 use std::{
@@ -22,6 +23,7 @@ use crossterm::{
 };
 
 use cache::{DirectoryCache, DirectoryFingerprint};
+use filter::matching_indices;
 use scan::{DirectoryEntry, ScanEvent, ScanHandle};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -29,7 +31,10 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 struct App {
   current_dir: PathBuf,
   entries: Vec<DirectoryEntry>,
+  visible_indices: Vec<usize>,
   selected: usize,
+  filter_query: String,
+  filter_mode: bool,
   cache: Option<DirectoryCache>,
   scan: Option<ScanHandle>,
   scan_fingerprint: Option<DirectoryFingerprint>,
@@ -62,7 +67,10 @@ impl App {
     let mut app = Self {
       current_dir,
       entries: Vec::new(),
+      visible_indices: Vec::new(),
       selected: 0,
+      filter_query: String::new(),
+      filter_mode: false,
       cache,
       scan: None,
       scan_fingerprint: None,
@@ -97,9 +105,24 @@ impl App {
       return Some(ExitAction::Cancel);
     }
 
+    if self.filter_mode {
+      return self.handle_filter_key(key);
+    }
+
     match key.code {
-      KeyCode::Esc => Some(ExitAction::Cancel),
-      KeyCode::Char('q') | KeyCode::Char('Q') => Some(ExitAction::Select(self.selected_path())),
+      KeyCode::Esc => {
+        if self.filter_query.is_empty() {
+          Some(ExitAction::Cancel)
+        } else {
+          self.set_filter_query(String::new());
+          None
+        }
+      }
+      KeyCode::Char('/') => {
+        self.filter_mode = true;
+        None
+      }
+      KeyCode::Char('q') | KeyCode::Char('Q') => self.selected_path().map(ExitAction::Select),
       KeyCode::Up | KeyCode::Char('k') => {
         self.move_selection(-1);
         None
@@ -113,7 +136,7 @@ impl App {
         None
       }
       KeyCode::End | KeyCode::Char('G') => {
-        self.selected = self.entries.len().saturating_sub(1);
+        self.selected = self.visible_indices.len().saturating_sub(1);
         None
       }
       KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
@@ -126,6 +149,53 @@ impl App {
       }
       KeyCode::Char('r') | KeyCode::Char('R') => {
         self.start_scan();
+        None
+      }
+      _ => None,
+    }
+  }
+
+  fn handle_filter_key(&mut self, key: KeyEvent) -> Option<ExitAction> {
+    match key.code {
+      KeyCode::Esc => {
+        self.filter_mode = false;
+        self.set_filter_query(String::new());
+        None
+      }
+      KeyCode::Enter => {
+        self.filter_mode = false;
+        None
+      }
+      KeyCode::Backspace => {
+        let mut query = self.filter_query.clone();
+        query.pop();
+        self.set_filter_query(query);
+        None
+      }
+      KeyCode::Up => {
+        self.move_selection(-1);
+        None
+      }
+      KeyCode::Down => {
+        self.move_selection(1);
+        None
+      }
+      KeyCode::Home => {
+        self.selected = 0;
+        None
+      }
+      KeyCode::End => {
+        self.selected = self.visible_indices.len().saturating_sub(1);
+        None
+      }
+      KeyCode::Char(character)
+        if !key
+          .modifiers
+          .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+      {
+        let mut query = self.filter_query.clone();
+        query.push(character);
+        self.set_filter_query(query);
         None
       }
       _ => None,
@@ -160,12 +230,10 @@ impl App {
   fn apply_scan_event(&mut self, event: ScanEvent) {
     match event {
       ScanEvent::Chunk(entries) => {
-        let selected_path = self
-          .entries
-          .get(self.selected)
-          .map(|entry| entry.path.clone());
+        let selected_path = self.selected_path();
         self.entries.extend(entries);
         self.sort_entries();
+        self.refresh_visible();
         self.restore_selection(selected_path.as_deref());
       }
       ScanEvent::Finished => {
@@ -185,15 +253,20 @@ impl App {
   fn start_scan(&mut self) {
     self.stop_scan();
     self.entries = parent_entry(&self.current_dir).into_iter().collect();
+    self.visible_indices.clear();
     self.selected = 0;
+    self.filter_query.clear();
+    self.filter_mode = false;
     self.status = ScanStatus::Indexing;
     self.sort_entries();
+    self.refresh_visible();
 
     if let Some(cache) = self.cache.as_ref()
       && let Ok(Some(entries)) = cache.load(&self.current_dir)
     {
       self.entries.extend(entries);
       self.sort_entries();
+      self.refresh_visible();
       self.status = ScanStatus::Ready;
       return;
     }
@@ -225,10 +298,10 @@ impl App {
   }
 
   fn open_selected(&mut self) {
-    let Some(entry) = self.entries.get(self.selected) else {
+    let Some(path) = self.selected_path() else {
       return;
     };
-    self.current_dir = entry.path.clone();
+    self.current_dir = path;
     self.start_scan();
   }
 
@@ -244,19 +317,33 @@ impl App {
   }
 
   fn move_selection(&mut self, delta: isize) {
-    if self.entries.is_empty() {
+    if self.visible_indices.is_empty() {
       return;
     }
-    let last = self.entries.len().saturating_sub(1) as isize;
+    let last = self.visible_indices.len().saturating_sub(1) as isize;
     self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
   }
 
-  fn selected_path(&self) -> PathBuf {
+  fn selected_path(&self) -> Option<PathBuf> {
     self
-      .entries
+      .visible_indices
       .get(self.selected)
+      .and_then(|&index| self.entries.get(index))
       .map(|entry| entry.path.clone())
-      .unwrap_or_else(|| self.current_dir.clone())
+  }
+
+  fn set_filter_query(&mut self, query: String) {
+    let selected_path = self.selected_path();
+    self.filter_query = query;
+    self.refresh_visible();
+    self.restore_selection(selected_path.as_deref());
+  }
+
+  fn refresh_visible(&mut self) {
+    self.visible_indices = matching_indices(&self.entries, &self.filter_query);
+    self.selected = self
+      .selected
+      .min(self.visible_indices.len().saturating_sub(1));
   }
 
   fn sort_entries(&mut self) {
@@ -272,14 +359,16 @@ impl App {
   fn restore_selection(&mut self, previous_path: Option<&Path>) {
     if let Some(previous_path) = previous_path
       && let Some(index) = self
-        .entries
+        .visible_indices
         .iter()
-        .position(|entry| entry.path == previous_path)
+        .position(|&index| self.entries[index].path == previous_path)
     {
       self.selected = index;
       return;
     }
-    self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+    self.selected = self
+      .selected
+      .min(self.visible_indices.len().saturating_sub(1));
   }
 
   fn draw(&self, output: &mut Stdout) -> io::Result<()> {
@@ -307,7 +396,11 @@ impl App {
     let scroll_start = self.scroll_start(list_height);
     for row in 0..list_height {
       let index = scroll_start + row;
-      let Some(entry) = self.entries.get(index) else {
+      let Some(&entry_index) = self.visible_indices.get(index) else {
+        put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
+        continue;
+      };
+      let Some(entry) = self.entries.get(entry_index) else {
         put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
         continue;
       };
@@ -325,7 +418,7 @@ impl App {
     put_line(
       output,
       height.saturating_sub(1),
-      " Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc cancel",
+      &self.footer_text(),
       width,
       Color::DarkGrey,
       false,
@@ -334,7 +427,7 @@ impl App {
   }
 
   fn status_text(&self) -> String {
-    match &self.status {
+    let status = match &self.status {
       ScanStatus::Indexing => {
         format!(
           " Indexing... {} directories discovered",
@@ -343,6 +436,17 @@ impl App {
       }
       ScanStatus::Ready => format!(" Ready  {} directories", self.discovered_count()),
       ScanStatus::Error(error) => format!(" Error  {error}"),
+    };
+    if self.filter_mode {
+      format!("{status}  Filter: {}_", self.filter_query)
+    } else if self.filter_query.is_empty() {
+      status
+    } else {
+      format!(
+        "{status}  Filter: {} ({} visible)",
+        self.filter_query,
+        self.visible_indices.len()
+      )
     }
   }
 
@@ -357,6 +461,18 @@ impl App {
 
   fn discovered_count(&self) -> usize {
     self.entries.len().saturating_sub(self.parent_count())
+  }
+
+  fn footer_text(&self) -> String {
+    if self.filter_mode {
+      " Type to filter  Backspace edit  Enter keep  Esc clear  Ctrl-C cancel".to_owned()
+    } else if self.filter_query.is_empty() {
+      " / filter  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc cancel"
+        .to_owned()
+    } else {
+      " / edit filter  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc clear"
+        .to_owned()
+    }
   }
 
   fn scroll_start(&self, list_height: usize) -> usize {
@@ -519,6 +635,7 @@ fn print_help() {
   println!("  --select PATH  write the selected directory on confirmation");
   println!();
   println!("  q          select the highlighted directory");
+  println!("  /          filter directory names");
   println!("  Esc/Ctrl-C  cancel without selecting a directory");
 }
 
@@ -563,7 +680,10 @@ mod tests {
         name: "target".to_owned(),
         path: selected_path.clone(),
       }],
+      visible_indices: vec![0],
       selected: 0,
+      filter_query: String::new(),
+      filter_mode: false,
       cache: None,
       scan: None,
       scan_fingerprint: None,
@@ -575,6 +695,195 @@ mod tests {
       Some(ExitAction::Select(path)) => assert_eq!(path, selected_path),
       _ => panic!("q should select the highlighted entry"),
     }
+  }
+
+  #[test]
+  fn filter_input_updates_visible_entries() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = App {
+      current_dir: current_dir.clone(),
+      entries: vec![
+        DirectoryEntry {
+          name: "..".to_owned(),
+          path: PathBuf::from("/tmp"),
+        },
+        DirectoryEntry {
+          name: "Target".to_owned(),
+          path: current_dir.join("Target"),
+        },
+        DirectoryEntry {
+          name: "logs".to_owned(),
+          path: current_dir.join("logs"),
+        },
+      ],
+      visible_indices: Vec::new(),
+      selected: 0,
+      filter_query: String::new(),
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Ready,
+    };
+    app.refresh_visible();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+
+    let visible_names = app
+      .visible_indices
+      .iter()
+      .map(|&index| app.entries[index].name.as_str())
+      .collect::<Vec<_>>();
+    assert!(app.filter_mode);
+    assert_eq!(app.filter_query, "t");
+    assert_eq!(visible_names, vec!["..", "Target"]);
+  }
+
+  #[test]
+  fn empty_results_cannot_select_the_current_directory() {
+    let mut app = App {
+      current_dir: PathBuf::from("/"),
+      entries: vec![DirectoryEntry {
+        name: "target".to_owned(),
+        path: PathBuf::from("/target"),
+      }],
+      visible_indices: Vec::new(),
+      selected: 0,
+      filter_query: String::new(),
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Ready,
+    };
+    app.refresh_visible();
+    app.set_filter_query("missing".to_owned());
+
+    assert!(app.visible_indices.is_empty());
+    assert!(
+      app
+        .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
+        .is_none()
+    );
+  }
+
+  #[test]
+  fn filter_update_preserves_the_selected_path() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let selected_path = current_dir.join("logs");
+    let mut app = App {
+      current_dir: current_dir.clone(),
+      entries: vec![
+        DirectoryEntry {
+          name: "target".to_owned(),
+          path: current_dir.join("target"),
+        },
+        DirectoryEntry {
+          name: "logs".to_owned(),
+          path: selected_path.clone(),
+        },
+      ],
+      visible_indices: Vec::new(),
+      selected: 1,
+      filter_query: String::new(),
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Ready,
+    };
+    app.refresh_visible();
+    app.set_filter_query("log".to_owned());
+
+    assert_eq!(app.selected_path(), Some(selected_path));
+    assert_eq!(app.selected, 0);
+  }
+
+  #[test]
+  fn filter_keys_edit_and_clear_the_query() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = App {
+      current_dir: current_dir.clone(),
+      entries: vec![
+        DirectoryEntry {
+          name: "target".to_owned(),
+          path: current_dir.join("target"),
+        },
+        DirectoryEntry {
+          name: "logs".to_owned(),
+          path: current_dir.join("logs"),
+        },
+      ],
+      visible_indices: Vec::new(),
+      selected: 0,
+      filter_query: String::new(),
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Ready,
+    };
+    app.refresh_visible();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+    assert!(app.filter_mode);
+    assert_eq!(app.filter_query, "T");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.filter_mode);
+    assert_eq!(app.filter_query, "T");
+
+    assert!(
+      app
+        .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .is_none()
+    );
+    assert!(app.filter_query.is_empty());
+    assert!(matches!(
+      app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+      Some(ExitAction::Cancel)
+    ));
+  }
+
+  #[test]
+  fn scan_chunks_keep_unfiltered_entries_and_selected_path() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let selected_path = current_dir.join("alpha");
+    let mut app = App {
+      current_dir: current_dir.clone(),
+      entries: vec![
+        DirectoryEntry {
+          name: "..".to_owned(),
+          path: PathBuf::from("/tmp"),
+        },
+        DirectoryEntry {
+          name: "alpha".to_owned(),
+          path: selected_path.clone(),
+        },
+      ],
+      visible_indices: Vec::new(),
+      selected: 1,
+      filter_query: "a".to_owned(),
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Indexing,
+    };
+    app.refresh_visible();
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "beta".to_owned(),
+      path: current_dir.join("beta"),
+    }]));
+
+    assert_eq!(app.entries.len(), 3);
+    assert_eq!(app.visible_indices, vec![0, 1, 2]);
+    assert_eq!(app.selected_path(), Some(selected_path));
   }
 
   #[test]

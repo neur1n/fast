@@ -7,10 +7,11 @@ shell working directory.
 
 ## Status
 
-The Phase 2 navigator is implemented. It starts in the current directory,
-lists direct child directories, uses a persistent fingerprinted cache for
-visited directories, and falls back to cancellable chunked scanning when the
-cache is missing or stale. Cache failures do not prevent navigation.
+The Phase 2 navigator and the built-in Phase 3 simple filter are implemented. It
+starts in the current directory, lists direct child directories, uses a
+persistent fingerprinted cache for visited directories, and falls back to
+cancellable chunked scanning when the cache is missing or stale. Cache failures
+do not prevent navigation.
 
 ## Run
 
@@ -23,7 +24,11 @@ testing cache behavior in an isolated directory.
 
 Use the arrow keys or `j`/`k` to move, `Enter` or `l` to open a directory,
 `Backspace` or `h` to go to its parent, `r` to rescan, `q` to select the
-highlighted directory, and `Esc` to cancel.
+highlighted directory, and `Esc` to cancel. Press `/` to enter filter mode;
+typed text is matched as a case-insensitive substring of directory names.
+`Backspace` edits the query, `Enter` keeps the filter and returns to navigation,
+and `Esc` clears an active filter. Press `Esc` again when no filter is active to
+cancel.
 
 ## Shell Integration
 
@@ -78,6 +83,7 @@ then changes the parent shell's directory after `q` confirms the highlighted sel
 - Keyboard interaction without mouse support
 - Chunked directory scanning with an indexing indicator
 - Persistent cache for visited directories
+- Built-in simple directory-name filtering
 - Bounded background prefetch of direct child directories
 - Nushell, Bash, and Zsh integration
 
