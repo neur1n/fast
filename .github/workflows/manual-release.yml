@@ -137,13 +137,13 @@ jobs:
             echo "Release binary was not found"
             exit 1
           fi
-          package="fast-${RELEASE_TAG}-${ASSET_TARGET}"
-          package_dir="package/${package}"
+          archive="fast-${RELEASE_TAG}-${ASSET_TARGET}"
+          package_dir="package/fast"
           mkdir -p "$package_dir"
           cp "$binary" "$package_dir/fast"
           cp README.md LICENSE "$package_dir/"
           cp -R shell "$package_dir/shell"
-          tar -czf "${package}.tar.gz" -C package "$package"
+          tar -czf "${archive}.tar.gz" -C package fast
 
       - name: Package Windows artifact
         if: runner.os == 'Windows'
@@ -153,15 +153,15 @@ jobs:
           ASSET_TARGET: ${{ matrix.asset_target }}
         shell: pwsh
         run: |
-          $package = "fast-$env:RELEASE_TAG-$env:ASSET_TARGET"
-          $packageDir = Join-Path "package" $package
+          $archive = "fast-$env:RELEASE_TAG-$env:ASSET_TARGET"
+          $packageDir = Join-Path "package" "fast"
           $releaseDir = Join-Path (Join-Path "target" $env:TARGET) "release"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           Copy-Item (Join-Path $releaseDir "fast.exe") (Join-Path $packageDir "fast.exe")
           Copy-Item "README.md" $packageDir
           Copy-Item "LICENSE" $packageDir
           Copy-Item "shell" (Join-Path $packageDir "shell") -Recurse
-          Compress-Archive -Path $packageDir -DestinationPath "$package.zip" -Force
+          Compress-Archive -Path $packageDir -DestinationPath "$archive.zip" -Force
 
       - name: Upload Unix artifact
         if: runner.os != 'Windows'
