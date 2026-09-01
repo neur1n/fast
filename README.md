@@ -147,54 +147,17 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 
 ## Usage
 
-<ul>
-  <li>
-    <strong>Cache directory:</strong> Set <code>FAST_CACHE_DIR</code> to override
-    the platform cache directory.
-  </li>
-  <li>
-    <strong>Move:</strong> Use <code>Up</code>/<code>Down</code> or
-    <code>j</code>/<code>k</code> to move the selection.
-  </li>
-  <li>
-    <strong>Jump:</strong> Use <code>Home</code>/<code>g</code> for the first
-    entry or <code>End</code>/<code>G</code> for the last entry.
-  </li>
-  <li>
-    <strong>Open:</strong> Press <code>Enter</code>/<code>Right</code> or
-    <code>l</code> to open the selected directory.
-  </li>
-  <li>
-    <strong>Parent:</strong> Press <code>Backspace</code>/<code>Left</code> or
-    <code>h</code> to go to the parent directory.
-  </li>
-  <li>
-    <strong>Rescan:</strong> Press <code>r</code> to scan the current directory
-    again.
-  </li>
-  <li>
-    <strong>Select:</strong> Press <code>q</code> to select the highlighted
-    directory.
-  </li>
-  <li>
-    <strong>Filter:</strong> Press <code>/</code> to enter filter mode. Typed
-    text uses case-insensitive substring matching by default.
-  </li>
-  <li>
-    <strong>Toggle filter:</strong> Press <code>Tab</code> in filter mode to
-    switch between simple and fuzzy matching.
-  </li>
-  <li>
-    <strong>Edit filter:</strong> Type to extend the query, use
-    <code>Backspace</code> to edit it, and press <code>Enter</code> to keep the
-    filter and return to navigation.
-  </li>
-  <li>
-    <strong>Cancel:</strong> Press <code>Esc</code> to clear an active filter;
-    press it again, or use <code>Ctrl-C</code>, to cancel without selecting a
-    directory.
-  </li>
-</ul>
+- **Cache directory:** Set `FAST_CACHE_DIR` to override the platform cache directory.
+- **Move:** Use `Up`/`Down` or `j`/`k` to move the selection.
+- **Jump:** Use `Home`/`g` for the first entry or `End`/`G` for the last entry.
+- **Open:** Press `Enter`/`Right` or `l` to open the selected directory.
+- **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory.
+- **Rescan:** Press `r` to scan the current directory again.
+- **Select:** Press `q` to select the highlighted directory.
+- **Filter:** Press `/` to enter filter mode. Typed text uses case-insensitive substring matching by default.
+- **Toggle filter:** Press `Tab` in filter mode to switch between simple and fuzzy matching.
+- **Edit filter:** Type to extend the query, use `Backspace` to edit it, and press `Enter` to keep the filter and return to navigation.
+- **Cancel:** Press `Esc` to clear an active filter; press it again, or use `Ctrl-C`, to cancel without selecting a directory.
 
 ## License
 
