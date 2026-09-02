@@ -247,7 +247,7 @@ impl App {
 
   fn start_scan(&mut self) {
     self.stop_scan();
-    self.entries = parent_entry(&self.current_dir).into_iter().collect();
+    self.entries = navigation_entries(&self.current_dir);
     self.visible_indices.clear();
     self.selected = 0;
     self.filter_query.clear();
@@ -289,14 +289,17 @@ impl App {
     let (Some(cache), Some(before)) = (self.cache.as_ref(), self.scan_fingerprint.as_ref()) else {
       return;
     };
-    let parent_count = self.parent_count();
-    let _ = cache.store_if_unchanged(&self.current_dir, before, &self.entries[parent_count..]);
+    let navigation_count = self.navigation_count();
+    let _ = cache.store_if_unchanged(&self.current_dir, before, &self.entries[navigation_count..]);
   }
 
   fn open_selected(&mut self) {
     let Some(path) = self.selected_path() else {
       return;
     };
+    if path == self.current_dir {
+      return;
+    }
     self.current_dir = path;
     self.start_scan();
   }
@@ -305,7 +308,7 @@ impl App {
     let Some(parent) = self.current_dir.parent().map(Path::to_path_buf) else {
       return;
     };
-    if parent == self.current_dir {
+    if parent == self.current_dir.as_path() {
       return;
     }
     self.current_dir = parent;
@@ -346,8 +349,8 @@ impl App {
   }
 
   fn sort_entries(&mut self) {
-    let parent_count = self.parent_count();
-    self.entries[parent_count..].sort_unstable_by(|left, right| {
+    let navigation_count = self.navigation_count();
+    self.entries[navigation_count..].sort_unstable_by(|left, right| {
       left
         .name
         .cmp(&right.name)
@@ -455,16 +458,33 @@ impl App {
   }
 
   fn parent_count(&self) -> usize {
+    let Some(parent) = self.current_dir.parent() else {
+      return 0;
+    };
+    if parent == self.current_dir {
+      return 0;
+    }
     usize::from(
       self
         .entries
         .first()
-        .is_some_and(|entry| entry.path == self.current_dir.parent().unwrap_or(&self.current_dir)),
+        .is_some_and(|entry| entry.path == parent),
     )
   }
 
+  fn navigation_count(&self) -> usize {
+    let parent_count = self.parent_count();
+    parent_count
+      + usize::from(
+        self
+          .entries
+          .get(parent_count)
+          .is_some_and(|entry| entry.name == "." && entry.path == self.current_dir),
+      )
+  }
+
   fn discovered_count(&self) -> usize {
-    self.entries.len().saturating_sub(self.parent_count())
+    self.entries.len().saturating_sub(self.navigation_count())
   }
 
   fn footer_text(&self) -> String {
@@ -497,6 +517,18 @@ fn parent_entry(path: &Path) -> Option<DirectoryEntry> {
     name: "..".to_owned(),
     path: parent.to_path_buf(),
   })
+}
+
+fn navigation_entries(path: &Path) -> Vec<DirectoryEntry> {
+  let mut entries = Vec::with_capacity(2);
+  if let Some(parent) = parent_entry(path) {
+    entries.push(parent);
+  }
+  entries.push(DirectoryEntry {
+    name: ".".to_owned(),
+    path: path.to_path_buf(),
+  });
+  entries
 }
 
 fn put_line<W: Write>(
@@ -558,6 +590,80 @@ mod tests {
   }
 
   #[test]
+  fn navigation_entries_include_the_current_directory() {
+    let current_dir = PathBuf::from("/tmp/current");
+
+    assert_eq!(
+      navigation_entries(&current_dir),
+      vec![
+        DirectoryEntry {
+          name: "..".to_owned(),
+          path: PathBuf::from("/tmp"),
+        },
+        DirectoryEntry {
+          name: ".".to_owned(),
+          path: current_dir,
+        },
+      ]
+    );
+  }
+
+  #[test]
+  fn root_navigation_entries_only_include_the_current_directory() {
+    let entries = navigation_entries(Path::new("/"));
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, ".");
+    assert_eq!(entries[0].path, PathBuf::from("/"));
+  }
+
+  #[test]
+  fn q_can_select_the_current_directory() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = App {
+      current_dir: current_dir.clone(),
+      entries: navigation_entries(&current_dir),
+      visible_indices: vec![0, 1],
+      selected: 1,
+      filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Ready,
+    };
+
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+
+    assert!(matches!(action, Some(ExitAction::Select(path)) if path == current_dir));
+  }
+
+  #[test]
+  fn opening_the_current_directory_is_a_no_op() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = App {
+      current_dir: current_dir.clone(),
+      entries: navigation_entries(&current_dir),
+      visible_indices: vec![0, 1],
+      selected: 1,
+      filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      status: ScanStatus::Ready,
+    };
+
+    app.open_selected();
+
+    assert_eq!(app.current_dir, current_dir);
+    assert!(app.scan.is_none());
+    assert!(matches!(app.status, ScanStatus::Ready));
+  }
+
+  #[test]
   fn filter_input_updates_visible_entries() {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = App {
@@ -566,6 +672,10 @@ mod tests {
         DirectoryEntry {
           name: "..".to_owned(),
           path: PathBuf::from("/tmp"),
+        },
+        DirectoryEntry {
+          name: ".".to_owned(),
+          path: current_dir.clone(),
         },
         DirectoryEntry {
           name: "Target".to_owned(),
@@ -598,7 +708,7 @@ mod tests {
       .collect::<Vec<_>>();
     assert!(app.filter_mode);
     assert_eq!(app.filter_query, "t");
-    assert_eq!(visible_names, vec!["..", "Target"]);
+    assert_eq!(visible_names, vec!["..", ".", "Target"]);
   }
 
   #[test]
@@ -730,12 +840,16 @@ mod tests {
           path: PathBuf::from("/tmp"),
         },
         DirectoryEntry {
+          name: ".".to_owned(),
+          path: current_dir.clone(),
+        },
+        DirectoryEntry {
           name: "alpha".to_owned(),
           path: selected_path.clone(),
         },
       ],
       visible_indices: Vec::new(),
-      selected: 1,
+      selected: 2,
       filter_query: "a".to_owned(),
       filter_kind: FilterKind::Substring,
       filter_mode: false,
@@ -751,8 +865,8 @@ mod tests {
       path: current_dir.join("beta"),
     }]));
 
-    assert_eq!(app.entries.len(), 3);
-    assert_eq!(app.visible_indices, vec![0, 1, 2]);
+    assert_eq!(app.entries.len(), 4);
+    assert_eq!(app.visible_indices, vec![0, 1, 2, 3]);
     assert_eq!(app.selected_path(), Some(selected_path));
   }
 
@@ -786,6 +900,9 @@ mod tests {
 
     assert!(matches!(app.status, ScanStatus::Ready));
     assert!(app.scan.is_none());
+    assert_eq!(app.entries[0].name, "..");
+    assert_eq!(app.entries[1].name, ".");
+    assert_eq!(app.discovered_count(), 1);
     assert_eq!(
       app
         .entries
@@ -793,6 +910,52 @@ mod tests {
         .filter(|entry| entry.name == "child")
         .count(),
       1
+    );
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn does_not_persist_navigation_entries_in_the_cache() {
+    let root = std::env::temp_dir().join(format!(
+      "fast-app-navigation-cache-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    let directory = root.join("workspace");
+    let cache = DirectoryCache::new(root.join("cache"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let child = directory.join("child");
+    std::fs::create_dir(&child).unwrap();
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    let mut app = App {
+      current_dir: directory.clone(),
+      entries: navigation_entries(&directory),
+      visible_indices: Vec::new(),
+      selected: 0,
+      filter_query: String::new(),
+      filter_kind: FilterKind::Substring,
+      filter_mode: false,
+      cache: Some(cache.clone()),
+      scan: None,
+      scan_fingerprint: Some(fingerprint),
+      status: ScanStatus::Ready,
+    };
+    app.entries.push(DirectoryEntry {
+      name: "child".to_owned(),
+      path: child.clone(),
+    });
+
+    app.persist_scan();
+
+    assert_eq!(
+      cache.load(&directory).unwrap(),
+      Some(vec![DirectoryEntry {
+        name: "child".to_owned(),
+        path: child,
+      }])
     );
     let _ = std::fs::remove_dir_all(root);
   }

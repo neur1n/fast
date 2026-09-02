@@ -51,7 +51,8 @@
       <summary><strong>Keyboard-first navigation</strong></summary>
       <p>
         Start in the current directory, browse its child directories, return to
-        the parent, rescan, and select a directory without leaving the keyboard.
+        the parent, rescan, and select a directory without leaving the
+        keyboard.
       </p>
     </details>
   </li>
@@ -60,8 +61,8 @@
       <summary><strong>Simple filtering</strong></summary>
       <p>
         Type part of a directory name to use predictable, case-insensitive
-        substring matching. The parent directory entry remains available while
-        filtering.
+        substring matching. The <code>..</code> and <code>.</code> navigation
+        entries remain available while filtering.
       </p>
     </details>
   </li>
@@ -79,9 +80,10 @@
     <details>
       <summary><strong>Shell integration</strong></summary>
       <p>
-        Bash, Zsh, and Nushell wrappers read the selected path and apply it with
-        <code>cd</code> in the parent shell. Confirm with <code>q</code> to change
-        directories, or cancel with <code>Esc</code> without changing the shell.
+        Bash, Zsh, and Nushell wrappers read the selected path and apply it
+        with <code>cd</code> in the parent shell. Confirm with <code>q</code>
+        to change directories, or cancel with <code>Esc</code> without changing
+        the shell.
       </p>
     </details>
   </li>
@@ -92,8 +94,8 @@
 ### Download a Release
 
 Download an archive from the [Releases](https://github.com/neur1n/fast/releases)
-page. Extract it, put the `fast` binary in `PATH`, and keep the bundled `shell/`
-directory available for shell integration.
+page. Extract it, put the `fast` binary in `PATH`, and keep the bundled
+`shell/` directory available for shell integration.
 
 ### Build from Source
 
@@ -151,7 +153,8 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 - **Move:** Use `Up`/`Down` or `j`/`k` to move the selection.
 - **Jump:** Use `Home`/`g` for the first entry or `End`/`G` for the last entry.
 - **Open:** Press `Enter`/`Right` or `l` to open the selected directory.
-- **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory.
+- **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory (`..`).
+- **Current:** The `.` entry represents the current directory. Select it with `q` to finish in the current directory; opening it is a no-op.
 - **Rescan:** Press `r` to scan the current directory again.
 - **Select:** Press `q` to select the highlighted directory.
 - **Filter:** Press `/` to enter filter mode. Typed text uses case-insensitive substring matching by default.

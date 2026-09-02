@@ -31,7 +31,7 @@ pub(crate) fn matching_indices(entries: &[DirectoryEntry], query: &str) -> Vec<u
     .iter()
     .enumerate()
     .filter_map(|(index, entry)| {
-      (entry.name == ".." || query.is_empty() || entry.name.to_lowercase().contains(&query))
+      (is_navigation_entry(entry) || query.is_empty() || entry.name.to_lowercase().contains(&query))
         .then_some(index)
     })
     .collect()
@@ -42,11 +42,11 @@ pub(crate) fn fuzzy_indices(entries: &[DirectoryEntry], query: &str) -> Vec<usiz
     return (0..entries.len()).collect();
   }
 
-  let mut parent_indices = Vec::new();
+  let mut navigation_indices = Vec::new();
   let mut matches = Vec::new();
   for (index, entry) in entries.iter().enumerate() {
-    if entry.name == ".." {
-      parent_indices.push(index);
+    if is_navigation_entry(entry) {
+      navigation_indices.push(index);
       continue;
     }
     if let Some(score) = fuzzy_score(&entry.name, query) {
@@ -55,8 +55,12 @@ pub(crate) fn fuzzy_indices(entries: &[DirectoryEntry], query: &str) -> Vec<usiz
   }
 
   matches.sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-  parent_indices.extend(matches.into_iter().map(|(_, index)| index));
-  parent_indices
+  navigation_indices.extend(matches.into_iter().map(|(_, index)| index));
+  navigation_indices
+}
+
+fn is_navigation_entry(entry: &DirectoryEntry) -> bool {
+  entry.name == "." || entry.name == ".."
 }
 
 fn fuzzy_score(name: &str, query: &str) -> Option<i64> {
@@ -111,17 +115,18 @@ mod tests {
   }
 
   #[test]
-  fn keeps_parent_entry_visible() {
-    let entries = [entry(".."), entry("alpha")];
+  fn keeps_navigation_entries_visible() {
+    let entries = [entry(".."), entry("."), entry("alpha")];
 
-    assert_eq!(matching_indices(&entries, "missing"), vec![0]);
+    assert_eq!(matching_indices(&entries, "missing"), vec![0, 1]);
+    assert_eq!(fuzzy_indices(&entries, "missing"), vec![0, 1]);
   }
 
   #[test]
   fn empty_query_matches_every_entry() {
-    let entries = [entry(".."), entry("alpha"), entry("beta")];
+    let entries = [entry(".."), entry("."), entry("alpha"), entry("beta")];
 
-    assert_eq!(matching_indices(&entries, ""), vec![0, 1, 2]);
+    assert_eq!(matching_indices(&entries, ""), vec![0, 1, 2, 3]);
   }
 
   #[test]
@@ -148,9 +153,9 @@ mod tests {
 
   #[test]
   fn fuzzy_matching_keeps_parent_visible_and_rejects_missing_matches() {
-    let entries = [entry(".."), entry("alpha")];
+    let entries = [entry(".."), entry("."), entry("alpha")];
 
-    assert_eq!(fuzzy_indices(&entries, "zz"), vec![0]);
+    assert_eq!(fuzzy_indices(&entries, "zz"), vec![0, 1]);
   }
 
   #[test]
