@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: none
+review: .project/review/REVIEW-0003-phase-3-internal-filter.md
 ---
 
 # Roadmap: fast
@@ -36,15 +36,20 @@ system by default.
 - Phase 2 persistent caching was committed in `882c4ac` with candidate tree
   `bd4b10ed717f89585ba24b54daef9f50afab51b5`; its gate was accepted in
   `REVIEW-0001`.
-- The manual release workflow and platform packaging steps are present; their
-  end-to-end release checks remain part of Phase 3.
+- The manual release workflow and platform packaging steps are present and
+  were exercised in practice as part of the Phase 3 verification.
 - Built-in simple filtering was implemented in `0ed7208`, and the in-process
-  fuzzy matcher was implemented in `df00d64` with 29 passing tests. Bounded
-  prefetch and the remaining wrapper/release checks are not yet complete. The
-  binary source was reorganized into dedicated application, CLI, and terminal
-  modules in `a27a411`, with the entrypoint reduced to top-level orchestration;
-  that approved refactor is recorded in `REVIEW-0002`. The active Phase 3 plan
-  and accepted fuzzy-matching decision are recorded in
+  fuzzy matcher was implemented in `df00d64`. The binary source was reorganized
+  into dedicated application, CLI, and terminal modules in `a27a411`, with the
+  entrypoint reduced to top-level orchestration; that approved refactor is
+  recorded in `REVIEW-0002`.
+- Explicit `..` parent and `.` current-directory navigation were implemented in
+  `3578296`; the test suite passes 34 tests and navigation entries remain out of
+  cached child-directory data. The Phase 3 implementation and practical
+  wrapper/release verification are accepted in `REVIEW-0003`.
+- Bounded child-directory prefetch is deferred to Phase 4 and planned in
+  `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`. The Phase 3 plan and
+  accepted fuzzy-matching decision are recorded in
   `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
   `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
 
@@ -78,26 +83,33 @@ system by default.
 - Status: Completed in `882c4ac`; the phase gate was accepted in `REVIEW-0001`.
 - Dependency: phase-1-minimal-navigator
 
-### Phase 3: Prefetch and Shell Integration
+### Phase 3: Internal Filter and Shell Integration
 
-- Objective: Add bounded child-directory prefetch and a small in-process fuzzy
-  matcher that extends the always-available built-in simple filter. Verify
-  release packaging and Nushell/Bash/Zsh wrappers, which are already
-  implemented; do not require `fzf`.
-- Gate: Shell navigation, bounded prefetch, simple and fuzzy filter behavior,
-  and platform release checks pass without a mandatory external database or
-  fuzzy-finder executable.
-- Status: Simple and fuzzy filter baselines are implemented; bounded prefetch,
-  wrapper/release verification, and the Phase 3 gate review remain.
+- Objective: Provide built-in simple and fuzzy directory filtering, explicit
+  current-directory navigation, and verified shell/release integration without
+  requiring `fzf`.
+- Gate: Current-directory navigation, simple and fuzzy filter behavior, shell
+  navigation, and platform release checks pass without a mandatory external
+  database or fuzzy-finder executable.
+- Status: Completed in `3578296` and accepted in `REVIEW-0003`.
 - Dependency: phase-2-persistent-directory-cache
+
+### Phase 4: Bounded Child-Directory Prefetch
+
+- Objective: Add bounded, cancellable prefetch for direct child-directory
+  listings while preserving shallow foreground navigation and the existing
+  cache contract.
+- Gate: Prefetch queue, concurrency, work bounds, cancellation, cache
+  interaction, and the absence of recursive indexing pass automated checks.
+- Status: Planned; `PLAN-0004` is proposed.
+- Dependency: phase-3-internal-filter-and-shell-integration
 
 ## Assumption
 
 - Rust is the proposed initial implementation language.
 - The initial browser lists directories only and does not support mouse input.
-- The default scan is shallow; prefetch is bounded and cancellable. Simple and
-  fuzzy filtering are built in; external `fzf` remains out of scope for this
-  phase.
+- The default scan is shallow; the deferred prefetch is bounded and cancellable.
+  Simple and fuzzy filtering are built in; external `fzf` remains out of scope.
 - The initial supported character set is UTF-8 with core cross-platform path
   and link behavior only.
 - SQLite remains an implementation option; if selected, it must be bundled so

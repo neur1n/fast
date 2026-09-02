@@ -2,19 +2,18 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; Phase 2 accepted, Phase 3 implementation in progress
-- Last reconciled: 2026-08-31
+- Status: active; Phase 3 accepted, Phase 4 plan proposed
+- Last reconciled: 2026-09-02
 - Roadmap: .project/roadmap/ROADMAP-0001.md
-- Current phase: phase-3-prefetch-and-shell-integration
-- Current plan: .project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md
+- Current phase: phase-4-bounded-prefetch
+- Current plan: .project/plan/PLAN-0004-phase-4-bounded-prefetch.md
 - Current issue: none
 
 ## Current Objective
 
-Prepare and execute reviewed Phase 3 work for bounded prefetch, an
-always-available built-in simple filter, a small in-process fuzzy matcher,
-release packaging, and shell-wrapper verification without making an external
-database or fuzzy-finder executable mandatory.
+Prepare the reviewed Phase 4 work for bounded, cancellable child-directory
+prefetch without making an external database or fuzzy-finder executable
+mandatory.
 
 ## Last Completed
 
@@ -37,18 +36,24 @@ database or fuzzy-finder executable mandatory.
 - Reorganized the binary into a small `main.rs` entrypoint plus dedicated app,
   CLI, and terminal modules in `a27a411`; the approved refactor is recorded in
   `REVIEW-0002` and the 29-test suite remains passing.
+- Implemented and committed explicit `..` parent and `.` current-directory
+  navigation in `3578296`; navigation entries remain outside cached child data
+  and the test suite passes 34 tests.
+- The Bash, Zsh, and Nushell wrappers and release packaging were exercised in
+  practice by the human reviewer; the Phase 3 implementation and verification
+  are accepted in `REVIEW-0003`.
+- Deferred bounded child-directory prefetch to Phase 4 and prepared
+  `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`.
 
 ## Next Action
 
-- Implement bounded child-directory prefetch and complete wrapper/release
-  verification, then prepare the Phase 3 implementation gate review.
+- Review and approve the Phase 4 prefetch plan, then implement bounded
+  cancellable child-directory prefetch.
 
 ## Blocker
 
-- Phase 3 gate review remains pending until bounded prefetch and wrapper/release
-  verification are complete.
+- Phase 4 implementation is pending review of the proposed prefetch plan.
 
 ## Pending Human Action
 
-- Review the complete Phase 3 implementation candidate after prefetch and
-  wrapper/release verification are complete.
+- Review and approve `PLAN-0004` before Phase 4 implementation begins.

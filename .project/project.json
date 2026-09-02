@@ -4,5 +4,5 @@
   "project": "fast",
   "state": ".project/STATE.md",
   "roadmap": ".project/roadmap/ROADMAP-0001.md",
-  "plan": ".project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md"
+  "plan": ".project/plan/PLAN-0004-phase-4-bounded-prefetch.md"
 }
