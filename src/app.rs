@@ -1,4 +1,5 @@
 use std::{
+  collections::HashMap,
   io::{self, Stdout, Write},
   path::{Path, PathBuf},
   time::Duration,
@@ -31,6 +32,7 @@ pub(crate) struct App {
   cache: Option<DirectoryCache>,
   scan: Option<ScanHandle>,
   scan_fingerprint: Option<DirectoryFingerprint>,
+  selection: SelectionState,
   status: ScanStatus,
 }
 
@@ -38,6 +40,12 @@ enum ScanStatus {
   Indexing,
   Ready,
   Error(String),
+}
+
+#[derive(Default)]
+struct SelectionState {
+  remembered: HashMap<PathBuf, PathBuf>,
+  pending: Option<PathBuf>,
 }
 
 pub(crate) enum ExitAction {
@@ -62,6 +70,7 @@ impl App {
       cache,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Indexing,
     };
     app.start_scan();
@@ -136,7 +145,7 @@ impl App {
         None
       }
       KeyCode::Char('r') | KeyCode::Char('R') => {
-        self.start_scan();
+        self.rescan();
         None
       }
       _ => None,
@@ -229,15 +238,19 @@ impl App {
         self.entries.extend(entries);
         self.sort_entries();
         self.refresh_visible();
-        self.restore_selection(selected_path.as_deref());
+        if !self.try_restore_pending_selection() {
+          self.restore_selection(selected_path.as_deref());
+        }
       }
       ScanEvent::Finished => {
+        self.finish_pending_selection();
         self.persist_scan();
         self.status = ScanStatus::Ready;
         self.scan = None;
         self.scan_fingerprint = None;
       }
       ScanEvent::Error(error) => {
+        self.selection.pending = None;
         self.status = ScanStatus::Error(error);
         self.scan = None;
         self.scan_fingerprint = None;
@@ -247,6 +260,7 @@ impl App {
 
   fn start_scan(&mut self) {
     self.stop_scan();
+    self.selection.pending = self.selection.remembered.get(&self.current_dir).cloned();
     self.entries = navigation_entries(&self.current_dir);
     self.visible_indices.clear();
     self.selected = 0;
@@ -256,6 +270,7 @@ impl App {
     self.status = ScanStatus::Indexing;
     self.sort_entries();
     self.refresh_visible();
+    self.try_restore_pending_selection();
 
     if let Some(cache) = self.cache.as_ref()
       && let Ok(Some(entries)) = cache.load(&self.current_dir)
@@ -263,6 +278,7 @@ impl App {
       self.entries.extend(entries);
       self.sort_entries();
       self.refresh_visible();
+      self.finish_pending_selection();
       self.status = ScanStatus::Ready;
       return;
     }
@@ -300,7 +316,18 @@ impl App {
     if path == self.current_dir {
       return;
     }
+    let previous_dir = self.current_dir.clone();
+    let returning_to_parent = previous_dir
+      .parent()
+      .is_some_and(|parent| parent == path.as_path());
+    self.remember_selection();
     self.current_dir = path;
+    if returning_to_parent {
+      self
+        .selection
+        .remembered
+        .insert(self.current_dir.clone(), previous_dir);
+    }
     self.start_scan();
   }
 
@@ -311,7 +338,18 @@ impl App {
     if parent == self.current_dir.as_path() {
       return;
     }
+    let child = self.current_dir.clone();
+    self.remember_selection();
     self.current_dir = parent;
+    self
+      .selection
+      .remembered
+      .insert(self.current_dir.clone(), child);
+    self.start_scan();
+  }
+
+  fn rescan(&mut self) {
+    self.remember_selection();
     self.start_scan();
   }
 
@@ -329,6 +367,16 @@ impl App {
       .get(self.selected)
       .and_then(|&index| self.entries.get(index))
       .map(|entry| entry.path.clone())
+  }
+
+  fn remember_selection(&mut self) {
+    let Some(path) = self.selected_path() else {
+      return;
+    };
+    self
+      .selection
+      .remembered
+      .insert(self.current_dir.clone(), path);
   }
 
   fn set_filter_query(&mut self, query: String) {
@@ -368,6 +416,30 @@ impl App {
       self.selected = index;
       return;
     }
+    self.selected = self
+      .selected
+      .min(self.visible_indices.len().saturating_sub(1));
+  }
+
+  fn try_restore_pending_selection(&mut self) -> bool {
+    let Some(path) = self.selection.pending.clone() else {
+      return false;
+    };
+    let Some(index) = self
+      .visible_indices
+      .iter()
+      .position(|&index| self.entries[index].path == path)
+    else {
+      return false;
+    };
+    self.selected = index;
+    self.selection.pending = None;
+    true
+  }
+
+  fn finish_pending_selection(&mut self) {
+    self.try_restore_pending_selection();
+    self.selection.pending = None;
     self.selected = self
       .selected
       .min(self.visible_indices.len().saturating_sub(1));
@@ -561,6 +633,24 @@ fn put_line<W: Write>(
 mod tests {
   use super::*;
 
+  fn app_with_entries(current_dir: PathBuf, entries: Vec<DirectoryEntry>, selected: usize) -> App {
+    let visible_indices = (0..entries.len()).collect();
+    App {
+      current_dir,
+      entries,
+      visible_indices,
+      selected,
+      filter_query: String::new(),
+      filter_kind: FilterKind::default(),
+      filter_mode: false,
+      cache: None,
+      scan: None,
+      scan_fingerprint: None,
+      selection: SelectionState::default(),
+      status: ScanStatus::Ready,
+    }
+  }
+
   #[test]
   fn q_selects_the_highlighted_entry() {
     let current_dir = PathBuf::from("/tmp/current");
@@ -579,6 +669,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
 
@@ -631,6 +722,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
 
@@ -653,6 +745,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
 
@@ -694,6 +787,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
     app.refresh_visible();
@@ -727,6 +821,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
     app.refresh_visible();
@@ -764,6 +859,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
     app.refresh_visible();
@@ -796,6 +892,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
     app.refresh_visible();
@@ -856,6 +953,7 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      selection: SelectionState::default(),
       status: ScanStatus::Indexing,
     };
     app.refresh_visible();
@@ -868,6 +966,90 @@ mod tests {
     assert_eq!(app.entries.len(), 4);
     assert_eq!(app.visible_indices, vec![0, 1, 2, 3]);
     assert_eq!(app.selected_path(), Some(selected_path));
+  }
+
+  #[test]
+  fn returning_to_parent_restores_the_child_entry() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let child = current_dir.join("child");
+    let mut app = app_with_entries(
+      current_dir.clone(),
+      vec![
+        DirectoryEntry {
+          name: "..".to_owned(),
+          path: PathBuf::from("/tmp"),
+        },
+        DirectoryEntry {
+          name: ".".to_owned(),
+          path: current_dir.clone(),
+        },
+        DirectoryEntry {
+          name: "child".to_owned(),
+          path: child.clone(),
+        },
+      ],
+      2,
+    );
+
+    app.open_selected();
+    assert_eq!(app.current_dir, child);
+    assert_eq!(app.selected_path(), Some(current_dir.clone()));
+    app.stop_scan();
+
+    app.open_parent();
+    app.stop_scan();
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "child".to_owned(),
+      path: child.clone(),
+    }]));
+
+    assert_eq!(app.selected_path(), Some(child));
+  }
+
+  #[test]
+  fn chunked_scan_restores_remembered_selection_when_entry_arrives() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let selected_path = current_dir.join("target");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app
+      .selection
+      .remembered
+      .insert(current_dir, selected_path.clone());
+    app.start_scan();
+    app.stop_scan();
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "other".to_owned(),
+      path: PathBuf::from("/tmp/current/other"),
+    }]));
+    assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "target".to_owned(),
+      path: selected_path.clone(),
+    }]));
+    assert_eq!(app.selected_path(), Some(selected_path));
+  }
+
+  #[test]
+  fn missing_remembered_selection_falls_back_to_a_valid_entry() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app
+      .selection
+      .remembered
+      .insert(current_dir.clone(), current_dir.join("missing"));
+    app.start_scan();
+    app.stop_scan();
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "other".to_owned(),
+      path: current_dir.join("other"),
+    }]));
+    app.apply_scan_event(ScanEvent::Finished);
+
+    assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
+    assert!(app.selected < app.visible_indices.len());
   }
 
   #[test]
@@ -887,7 +1069,7 @@ mod tests {
     std::fs::create_dir(&child).unwrap();
     let entries = vec![DirectoryEntry {
       name: "child".to_owned(),
-      path: child,
+      path: child.clone(),
     }];
     let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
     assert!(
@@ -912,6 +1094,16 @@ mod tests {
         .count(),
       1
     );
+
+    app.selected = app
+      .visible_indices
+      .iter()
+      .position(|&index| app.entries[index].path == child)
+      .unwrap();
+    app.remember_selection();
+    app.start_scan();
+
+    assert_eq!(app.selected_path(), Some(child.clone()));
 
     app.filter_kind = FilterKind::Substring;
     app.filter_query = "child".to_owned();
@@ -949,6 +1141,7 @@ mod tests {
       cache: Some(cache.clone()),
       scan: None,
       scan_fingerprint: Some(fingerprint),
+      selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
     app.entries.push(DirectoryEntry {
