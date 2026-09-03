@@ -2,18 +2,19 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; Phase 3 accepted, Phase 4 plan proposed
+- Status: active; Phase 3 accepted, navigator UX follow-up proposed, Phase 4 prefetch deferred
 - Last reconciled: 2026-09-02
 - Roadmap: .project/roadmap/ROADMAP-0001.md
-- Current phase: phase-4-bounded-prefetch
-- Current plan: .project/plan/PLAN-0004-phase-4-bounded-prefetch.md
+- Current phase: phase-3-navigation-ux-refinements
+- Current plan: .project/plan/PLAN-0005-phase-3-navigation-ux-refinements.md
 - Current issue: none
 
 ## Current Objective
 
-Prepare the reviewed Phase 4 work for bounded, cancellable child-directory
-prefetch without making an external database or fuzzy-finder executable
-mandatory.
+Prepare the reviewed navigator UX refinements for fuzzy-default filtering and
+process-local path-based selection restoration without changing the cache
+contract. Keep bounded child-directory prefetch deferred until a demonstrated
+need emerges.
 
 ## Last Completed
 
@@ -44,16 +45,21 @@ mandatory.
   are accepted in `REVIEW-0003`.
 - Deferred bounded child-directory prefetch to Phase 4 and prepared
   `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`.
+- Proposed fuzzy-default filtering and process-local selection restoration as a
+  Phase 3 follow-up in `PLAN-0005` and `DECISION-0004`.
 
 ## Next Action
 
-- Review and approve the Phase 4 prefetch plan, then implement bounded
-  cancellable child-directory prefetch.
+- Review and approve `PLAN-0005` and `DECISION-0004`, then implement the
+  navigator UX refinements.
 
 ## Blocker
 
-- Phase 4 implementation is pending review of the proposed prefetch plan.
+- Navigator UX implementation is pending review of `PLAN-0005` and
+  `DECISION-0004`; Phase 4 prefetch remains deferred.
 
 ## Pending Human Action
 
-- Review and approve `PLAN-0004` before Phase 4 implementation begins.
+- Review and approve `PLAN-0005` and `DECISION-0004` before implementation
+  begins. Revisit `PLAN-0004` only when current scan behavior no longer meets
+  observed needs.

@@ -47,9 +47,15 @@ system by default.
   `3578296`; the test suite passes 34 tests and navigation entries remain out of
   cached child-directory data. The Phase 3 implementation and practical
   wrapper/release verification are accepted in `REVIEW-0003`.
-- Bounded child-directory prefetch is deferred to Phase 4 and planned in
-  `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`. The Phase 3 plan and
-  accepted fuzzy-matching decision are recorded in
+- Navigator UX refinements are proposed in
+  `.project/plan/PLAN-0005-phase-3-navigation-ux-refinements.md`, with the
+  behavior recorded in
+  `.project/decision/DECISION-0004-navigation-defaults-and-session-selection.md`.
+- Bounded child-directory prefetch remains deferred. It is retained as the
+  proposed `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md` and will be
+  revisited if measured workloads demonstrate a need beyond the current
+  chunked scan behavior. The Phase 3 plan and accepted fuzzy-matching decision
+  are recorded in
   `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
   `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
 
@@ -94,6 +100,16 @@ system by default.
 - Status: Completed in `3578296` and accepted in `REVIEW-0003`.
 - Dependency: phase-2-persistent-directory-cache
 
+### Phase 3 Follow-up: Navigator UX Refinements
+
+- Objective: Make fuzzy filtering the default and preserve directory selection
+  within the current process without changing the cache contract.
+- Gate: Default filter behavior, substring fallback, parent selection
+  restoration, asynchronous scan restoration, and safe missing-entry fallback
+  pass automated checks.
+- Status: Proposed; `PLAN-0005` and `DECISION-0004` are pending review.
+- Dependency: phase-3-internal-filter-and-shell-integration
+
 ### Phase 4: Bounded Child-Directory Prefetch
 
 - Objective: Add bounded, cancellable prefetch for direct child-directory
@@ -101,7 +117,7 @@ system by default.
   cache contract.
 - Gate: Prefetch queue, concurrency, work bounds, cancellation, cache
   interaction, and the absence of recursive indexing pass automated checks.
-- Status: Planned; `PLAN-0004` is proposed.
+- Status: Deferred; `PLAN-0004` remains proposed pending demonstrated need.
 - Dependency: phase-3-internal-filter-and-shell-integration
 
 ## Assumption
