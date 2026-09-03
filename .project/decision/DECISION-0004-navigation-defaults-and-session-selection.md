@@ -1,9 +1,9 @@
 ---
 id: DECISION-0004
-status: proposed
+status: accepted
 date: 2026-09-02
 supersedes: none
-review: none
+review: .project/review/REVIEW-0004-phase-3-navigation-ux.md
 ---
 
 # Decision: Navigation Defaults and Session Selection

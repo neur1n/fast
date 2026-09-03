@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: .project/review/REVIEW-0003-phase-3-internal-filter.md
+review: .project/review/REVIEW-0004-phase-3-navigation-ux.md
 ---
 
 # Roadmap: fast
@@ -47,9 +47,10 @@ system by default.
   `3578296`; the test suite passes 34 tests and navigation entries remain out of
   cached child-directory data. The Phase 3 implementation and practical
   wrapper/release verification are accepted in `REVIEW-0003`.
-- Navigator UX refinements are proposed in
-  `.project/plan/PLAN-0005-phase-3-navigation-ux-refinements.md`, with the
-  behavior recorded in
+- Navigator UX refinements are implemented and accepted in the code candidate
+  recorded by `REVIEW-0004`; the plan is
+  `.project/plan/PLAN-0005-phase-3-navigation-ux-refinements.md`, and the
+  behavior is recorded in
   `.project/decision/DECISION-0004-navigation-defaults-and-session-selection.md`.
 - Bounded child-directory prefetch remains deferred. It is retained as the
   proposed `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md` and will be
@@ -107,7 +108,8 @@ system by default.
 - Gate: Default filter behavior, substring fallback, parent selection
   restoration, asynchronous scan restoration, and safe missing-entry fallback
   pass automated checks.
-- Status: Proposed; `PLAN-0005` and `DECISION-0004` are pending review.
+- Status: Completed and accepted in `REVIEW-0004`; the code commit and
+  candidate tree identifiers are pending recording.
 - Dependency: phase-3-internal-filter-and-shell-integration
 
 ### Phase 4: Bounded Child-Directory Prefetch

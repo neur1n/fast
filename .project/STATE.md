@@ -2,11 +2,11 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; Phase 3 accepted, navigator UX follow-up proposed, Phase 4 prefetch deferred
-- Last reconciled: 2026-09-02
+- Status: active; Phase 3 and navigator UX follow-up accepted, Phase 4 prefetch deferred
+- Last reconciled: 2026-09-03
 - Roadmap: .project/roadmap/ROADMAP-0001.md
-- Current phase: phase-3-navigation-ux-refinements
-- Current plan: .project/plan/PLAN-0005-phase-3-navigation-ux-refinements.md
+- Current phase: phase-4-bounded-prefetch
+- Current plan: .project/plan/PLAN-0004-phase-4-bounded-prefetch.md
 - Current issue: none
 
 ## Current Objective
@@ -45,21 +45,22 @@ need emerges.
   are accepted in `REVIEW-0003`.
 - Deferred bounded child-directory prefetch to Phase 4 and prepared
   `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`.
-- Proposed fuzzy-default filtering and process-local selection restoration as a
-  Phase 3 follow-up in `PLAN-0005` and `DECISION-0004`.
+- Implemented fuzzy-default filtering in `5b572e6` and accepted the behavior in
+  `REVIEW-0004`.
+- Implemented process-local path-based selection restoration in the accepted
+  code candidate; its code commit and candidate tree identifiers are pending.
 
 ## Next Action
 
-- Review and approve `PLAN-0005` and `DECISION-0004`, then implement the
-  navigator UX refinements.
+- Revisit `PLAN-0004` only when measured workloads show that the current
+  chunked scan behavior is insufficient.
 
 ## Blocker
 
-- Navigator UX implementation is pending review of `PLAN-0005` and
-  `DECISION-0004`; Phase 4 prefetch remains deferred.
+- Phase 4 prefetch remains deferred; no blocker is recorded for the completed
+  navigator UX follow-up.
 
 ## Pending Human Action
 
-- Review and approve `PLAN-0005` and `DECISION-0004` before implementation
-  begins. Revisit `PLAN-0004` only when current scan behavior no longer meets
-  observed needs.
+- Commit the accepted `src/app.rs` candidate, then fill the resulting commit and
+  tree identifiers in `REVIEW-0004` when the governance record is reconciled.
