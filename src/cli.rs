@@ -72,7 +72,7 @@ pub(crate) fn print_help() {
   println!("  --select PATH  write the selected directory on confirmation");
   println!();
   println!("  q          select the highlighted directory");
-  println!("  /          filter names (Tab toggles simple/fuzzy)");
+  println!("  /          filter names (fuzzy by default; Tab toggles simple/fuzzy)");
   println!("  Esc/Ctrl-C  cancel without selecting a directory");
 }
 

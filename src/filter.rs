@@ -3,9 +3,10 @@ use crate::scan::DirectoryEntry;
 const CONTIGUOUS_BONUS: i64 = 20;
 const WORD_BOUNDARY_BONUS: i64 = 12;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum FilterKind {
   Substring,
+  #[default]
   Fuzzy,
 }
 
@@ -112,6 +113,11 @@ mod tests {
     let entries = [entry("alpha"), entry("Beta"), entry("gamma")];
 
     assert_eq!(matching_indices(&entries, "ET"), vec![1]);
+  }
+
+  #[test]
+  fn defaults_to_fuzzy_matching() {
+    assert_eq!(FilterKind::default(), FilterKind::Fuzzy);
   }
 
   #[test]

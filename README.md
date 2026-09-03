@@ -60,8 +60,8 @@
     <details>
       <summary><strong>Simple filtering</strong></summary>
       <p>
-        Type part of a directory name to use predictable, case-insensitive
-        substring matching. The <code>..</code> and <code>.</code> navigation
+        Switch to predictable, case-insensitive substring matching with
+        <code>Tab</code>. The <code>..</code> and <code>.</code> navigation
         entries remain available while filtering.
       </p>
     </details>
@@ -70,9 +70,10 @@
     <details>
       <summary><strong>Fuzzy filtering</strong></summary>
       <p>
-        Switch from simple matching to fuzzy matching with <code>Tab</code>.
-        Query characters only need to appear in order, and better-scoring names
-        are ranked first when an exact substring is not convenient.
+        Fuzzy matching is the default filter mode. Query characters only need
+        to appear in order, and better-scoring names are ranked first when an
+        exact substring is not convenient. Press <code>Tab</code> to switch to
+        simple matching.
       </p>
     </details>
   </li>
@@ -157,8 +158,8 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 - **Current:** The `.` entry represents the current directory. Select it with `q` to finish in the current directory; opening it is a no-op.
 - **Rescan:** Press `r` to scan the current directory again.
 - **Select:** Press `q` to select the highlighted directory.
-- **Filter:** Press `/` to enter filter mode. Typed text uses case-insensitive substring matching by default.
-- **Toggle filter:** Press `Tab` in filter mode to switch between simple and fuzzy matching.
+- **Filter:** Press `/` to enter filter mode. Typed text uses fuzzy matching by default.
+- **Toggle filter:** Press `Tab` in filter mode to switch between fuzzy and simple matching.
 - **Edit filter:** Type to extend the query, use `Backspace` to edit it, and press `Enter` to keep the filter and return to navigation.
 - **Cancel:** Press `Esc` to clear an active filter; press it again, or use `Ctrl-C`, to cancel without selecting a directory.
 

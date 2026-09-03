@@ -57,7 +57,7 @@ impl App {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
+      filter_kind: FilterKind::default(),
       filter_mode: false,
       cache,
       scan: None,
@@ -251,7 +251,7 @@ impl App {
     self.visible_indices.clear();
     self.selected = 0;
     self.filter_query.clear();
-    self.filter_kind = FilterKind::Substring;
+    self.filter_kind = FilterKind::default();
     self.filter_mode = false;
     self.status = ScanStatus::Indexing;
     self.sort_entries();
@@ -689,7 +689,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
+      filter_kind: FilterKind::default(),
       filter_mode: false,
       cache: None,
       scan: None,
@@ -791,7 +791,7 @@ mod tests {
       visible_indices: Vec::new(),
       selected: 0,
       filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
+      filter_kind: FilterKind::default(),
       filter_mode: false,
       cache: None,
       scan: None,
@@ -808,10 +808,10 @@ mod tests {
 
     assert!(app.filter_mode);
     assert_eq!(app.filter_query, "T");
-    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
+    assert_eq!(app.filter_kind, FilterKind::Substring);
     assert_eq!(app.visible_indices, vec![0]);
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.filter_kind, FilterKind::Substring);
+    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(!app.filter_mode);
     assert_eq!(app.filter_query, "T");
@@ -896,8 +896,9 @@ mod tests {
         .unwrap()
     );
 
-    let app = App::with_cache(directory, Some(cache));
+    let mut app = App::with_cache(directory.clone(), Some(cache));
 
+    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
     assert!(matches!(app.status, ScanStatus::Ready));
     assert!(app.scan.is_none());
     assert_eq!(app.entries[0].name, "..");
@@ -911,6 +912,13 @@ mod tests {
         .count(),
       1
     );
+
+    app.filter_kind = FilterKind::Substring;
+    app.filter_query = "child".to_owned();
+    app.start_scan();
+
+    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
+    assert!(app.filter_query.is_empty());
     let _ = std::fs::remove_dir_all(root);
   }
 
