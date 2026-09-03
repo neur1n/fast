@@ -45,7 +45,13 @@ enum ScanStatus {
 #[derive(Default)]
 struct SelectionState {
   remembered: HashMap<PathBuf, PathBuf>,
-  pending: Option<PathBuf>,
+  pending: Option<PendingSelection>,
+}
+
+#[derive(Clone)]
+enum PendingSelection {
+  Remembered(PathBuf),
+  FirstChild,
 }
 
 pub(crate) enum ExitAction {
@@ -129,10 +135,12 @@ impl App {
         None
       }
       KeyCode::Home | KeyCode::Char('g') => {
+        self.cancel_pending_selection();
         self.selected = 0;
         None
       }
       KeyCode::End | KeyCode::Char('G') => {
+        self.cancel_pending_selection();
         self.selected = self.visible_indices.len().saturating_sub(1);
         None
       }
@@ -185,10 +193,12 @@ impl App {
         None
       }
       KeyCode::Home => {
+        self.cancel_pending_selection();
         self.selected = 0;
         None
       }
       KeyCode::End => {
+        self.cancel_pending_selection();
         self.selected = self.visible_indices.len().saturating_sub(1);
         None
       }
@@ -260,7 +270,15 @@ impl App {
 
   fn start_scan(&mut self) {
     self.stop_scan();
-    self.selection.pending = self.selection.remembered.get(&self.current_dir).cloned();
+    self.selection.pending = Some(
+      self
+        .selection
+        .remembered
+        .get(&self.current_dir)
+        .cloned()
+        .map(PendingSelection::Remembered)
+        .unwrap_or(PendingSelection::FirstChild),
+    );
     self.entries = navigation_entries(&self.current_dir);
     self.visible_indices.clear();
     self.selected = 0;
@@ -270,6 +288,7 @@ impl App {
     self.status = ScanStatus::Indexing;
     self.sort_entries();
     self.refresh_visible();
+    self.select_first_child_or_navigation();
     self.try_restore_pending_selection();
 
     if let Some(cache) = self.cache.as_ref()
@@ -354,6 +373,7 @@ impl App {
   }
 
   fn move_selection(&mut self, delta: isize) {
+    self.cancel_pending_selection();
     if self.visible_indices.is_empty() {
       return;
     }
@@ -421,24 +441,62 @@ impl App {
       .min(self.visible_indices.len().saturating_sub(1));
   }
 
-  fn try_restore_pending_selection(&mut self) -> bool {
-    let Some(path) = self.selection.pending.clone() else {
-      return false;
-    };
-    let Some(index) = self
+  fn cancel_pending_selection(&mut self) {
+    self.selection.pending = None;
+  }
+
+  fn first_child_position(&self) -> Option<usize> {
+    let navigation_count = self.navigation_count();
+    self
       .visible_indices
       .iter()
-      .position(|&index| self.entries[index].path == path)
-    else {
+      .position(|&index| index >= navigation_count)
+  }
+
+  fn navigation_position(&self) -> Option<usize> {
+    let navigation_count = self.navigation_count();
+    self
+      .visible_indices
+      .iter()
+      .rposition(|&index| index < navigation_count)
+  }
+
+  fn select_first_child_or_navigation(&mut self) {
+    if let Some(position) = self.first_child_position() {
+      self.selected = position;
+    } else if let Some(position) = self.navigation_position() {
+      self.selected = position;
+    } else {
+      self.selected = self
+        .selected
+        .min(self.visible_indices.len().saturating_sub(1));
+    }
+  }
+
+  fn try_restore_pending_selection(&mut self) -> bool {
+    let Some(pending) = self.selection.pending.clone() else {
       return false;
     };
-    self.selected = index;
+    let position = match pending {
+      PendingSelection::Remembered(path) => self
+        .visible_indices
+        .iter()
+        .position(|&index| self.entries[index].path == path),
+      PendingSelection::FirstChild => self.first_child_position(),
+    };
+    let Some(position) = position else {
+      return false;
+    };
+    self.selected = position;
     self.selection.pending = None;
     true
   }
 
   fn finish_pending_selection(&mut self) {
-    self.try_restore_pending_selection();
+    let had_pending = self.selection.pending.is_some();
+    if !self.try_restore_pending_selection() && had_pending {
+      self.select_first_child_or_navigation();
+    }
     self.selection.pending = None;
     self.selected = self
       .selected
@@ -969,6 +1027,94 @@ mod tests {
   }
 
   #[test]
+  fn unvisited_directory_selects_the_first_child_after_navigation_entries() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![
+      DirectoryEntry {
+        name: "beta".to_owned(),
+        path: current_dir.join("beta"),
+      },
+      DirectoryEntry {
+        name: "alpha".to_owned(),
+        path: current_dir.join("alpha"),
+      },
+    ]));
+
+    assert_eq!(app.selected_path(), Some(current_dir.join("alpha")));
+    assert!(app.selection.pending.is_none());
+  }
+
+  #[test]
+  fn root_directory_selects_the_first_child_after_current_entry() {
+    let current_dir = PathBuf::from("/");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "alpha".to_owned(),
+      path: current_dir.join("alpha"),
+    }]));
+
+    assert_eq!(app.selected_path(), Some(current_dir.join("alpha")));
+  }
+
+  #[test]
+  fn empty_directory_falls_back_to_the_current_entry() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+    app.apply_scan_event(ScanEvent::Finished);
+    assert_eq!(app.selected_path(), Some(current_dir.clone()));
+
+    let root = PathBuf::from("/");
+    let mut app = app_with_entries(root.clone(), navigation_entries(&root), 0);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+    app.apply_scan_event(ScanEvent::Finished);
+    assert_eq!(app.selected_path(), Some(root));
+  }
+
+  #[test]
+  fn manual_selection_movement_overrides_pending_default() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "alpha".to_owned(),
+      path: current_dir.join("alpha"),
+    }]));
+
+    assert_eq!(app.selected_path(), Some(current_dir));
+    assert!(app.selection.pending.is_none());
+  }
+
+  #[test]
+  fn manual_home_and_end_override_pending_default() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "alpha".to_owned(),
+      path: current_dir.join("alpha"),
+    }]));
+    assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
+
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.selection.pending = Some(PendingSelection::FirstChild);
+    app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "alpha".to_owned(),
+      path: current_dir.join("alpha"),
+    }]));
+    assert_eq!(app.selected_path(), Some(current_dir));
+  }
+
+  #[test]
   fn returning_to_parent_restores_the_child_entry() {
     let current_dir = PathBuf::from("/tmp/current");
     let child = current_dir.join("child");
@@ -993,7 +1139,7 @@ mod tests {
 
     app.open_selected();
     assert_eq!(app.current_dir, child);
-    assert_eq!(app.selected_path(), Some(current_dir.clone()));
+    assert_eq!(app.selected_path(), Some(child.clone()));
     app.stop_scan();
 
     app.open_parent();
@@ -1014,7 +1160,7 @@ mod tests {
     app
       .selection
       .remembered
-      .insert(current_dir, selected_path.clone());
+      .insert(current_dir.clone(), selected_path.clone());
     app.start_scan();
     app.stop_scan();
 
@@ -1022,7 +1168,7 @@ mod tests {
       name: "other".to_owned(),
       path: PathBuf::from("/tmp/current/other"),
     }]));
-    assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
+    assert_eq!(app.selected_path(), Some(current_dir.clone()));
 
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "target".to_owned(),
@@ -1048,7 +1194,7 @@ mod tests {
     }]));
     app.apply_scan_event(ScanEvent::Finished);
 
-    assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
+    assert_eq!(app.selected_path(), Some(current_dir.join("other")));
     assert!(app.selected < app.visible_indices.len());
   }
 
@@ -1085,6 +1231,7 @@ mod tests {
     assert!(app.scan.is_none());
     assert_eq!(app.entries[0].name, "..");
     assert_eq!(app.entries[1].name, ".");
+    assert_eq!(app.selected_path(), Some(child.clone()));
     assert_eq!(app.discovered_count(), 1);
     assert_eq!(
       app

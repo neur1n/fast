@@ -52,7 +52,9 @@
       <p>
         Start in the current directory, browse its child directories, return to
         the parent, rescan, and select a directory without leaving the
-        keyboard.
+        keyboard. A directory without a remembered selection highlights its
+        first child after the `..` and `.` navigation entries; remembered
+        selections are restored when available.
       </p>
     </details>
   </li>
@@ -153,6 +155,8 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 - **Cache directory:** Set `FAST_CACHE_DIR` to override the platform cache directory.
 - **Move:** Use `Up`/`Down` or `j`/`k` to move the selection.
 - **Jump:** Use `Home`/`g` for the first entry or `End`/`G` for the last entry.
+- **Default selection:** A new directory selects its first child after the
+  `..` and `.` navigation entries. Empty directories fall back to `.`.
 - **Open:** Press `Enter`/`Right` or `l` to open the selected directory.
 - **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory (`..`).
 - **Current:** The `.` entry represents the current directory. Select it with `q` to finish in the current directory; opening it is a no-op.
