@@ -2,7 +2,7 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; Phase 3 and navigator UX follow-up accepted, Phase 4 prefetch deferred
+- Status: active; version reporting accepted, Phase 3 and navigator UX follow-up accepted, Phase 4 prefetch deferred
 - Last reconciled: 2026-09-03
 - Roadmap: .project/roadmap/ROADMAP-0001.md
 - Current phase: phase-4-bounded-prefetch
@@ -47,8 +47,11 @@ need emerges.
   `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`.
 - Implemented fuzzy-default filtering in `5b572e6` and accepted the behavior in
   `REVIEW-0004`.
-- Implemented process-local path-based selection restoration in the accepted
-  code candidate; its code commit and candidate tree identifiers are pending.
+- Implemented and committed process-local path-based selection restoration in
+  `94b4673`; the behavior is recorded in `REVIEW-0004`.
+- Implemented version reporting, release injection, and no-`v` release handling
+  in `73e9786`; the package version is `0.0.3` and `Cargo.lock` is synchronized
+  with `cargo check --offline`.
 
 ## Next Action
 
@@ -62,5 +65,5 @@ need emerges.
 
 ## Pending Human Action
 
-- Commit the accepted `src/app.rs` candidate, then fill the resulting commit and
-  tree identifiers in `REVIEW-0004` when the governance record is reconciled.
+- Commit the synchronized `Cargo.lock` and governance reconciliation, then fill
+  the resulting candidate tree and commit identifiers in `REVIEW-0005`.

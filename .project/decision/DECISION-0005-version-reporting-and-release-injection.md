@@ -40,7 +40,7 @@ creates a GitHub prerelease.
 
 Nightly builds are not created by the manual release workflow. A nightly build
 entry point should explicitly inject a unique version such as
-`0.1.0-nightly.20260903.123`, using a UTC date and a CI run identifier.
+`0.0.3-nightly.20260903.123`, using a UTC date and a CI run identifier.
 
 The shell wrappers preserve their no-argument navigation behavior. When any
 argument is supplied, they forward all arguments directly to the binary so
@@ -75,5 +75,7 @@ manual release to be a prerelease.
 - `shell/fast.bash`
 - `shell/fast.zsh`
 - `shell/fast.nu`
+- `Cargo.toml`
+- `Cargo.lock`
 - `.github/workflows/manual-release.yml`
 - `README.md`
