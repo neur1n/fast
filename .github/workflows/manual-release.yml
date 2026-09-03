@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Prerelease tag, for example v0.1.0-dev.1"
+        description: "Release version, for example 0.1.0 or 0.1.0-rc.1"
         required: true
         type: string
 
@@ -26,8 +26,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Tag must look like v0.1.0 or v0.1.0-dev.1"
+          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must look like 0.1.0 or 0.1.0-rc.1"
             exit 1
           fi
 
@@ -36,6 +36,8 @@ jobs:
     needs: validate
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      FAST_BUILD_VERSION: ${{ inputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -182,7 +184,7 @@ jobs:
           retention-days: 30
 
   release:
-    name: Create prerelease
+    name: Create release
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -195,16 +197,20 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create GitHub prerelease
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "fast $RELEASE_TAG" \
-            --prerelease \
+          release_args=(
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "fast $RELEASE_TAG"
             --generate-notes
+          )
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" dist/* "${release_args[@]}"

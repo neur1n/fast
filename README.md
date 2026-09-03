@@ -15,6 +15,7 @@
   <ul>
     <li><a href="#features">Features</a></li>
     <li><a href="#installation">Installation</a></li>
+    <li><a href="#version">Version</a></li>
     <li><a href="#shell-integration">Shell Integration</a></li>
     <li><a href="#usage">Usage</a></li>
     <li><a href="#license">License</a></li>
@@ -128,6 +129,26 @@ export FAST_BIN="$PWD/target/debug/fast"
 # Nushell
 $env.FAST_BIN = (pwd | path join "target" "debug" "fast")
 ```
+
+## Version
+
+Print the version without starting the navigator:
+
+```sh
+fast --version
+# fast 0.1.0
+```
+
+`-V` is an alias for `--version`. Local builds use the version in
+`Cargo.toml`. Release builds use the version supplied to the manual GitHub
+release workflow, which is injected into the binary at build time.
+
+Versions and Git tags do not use a leading `v`:
+
+- `0.1.0` creates a regular GitHub Release.
+- `0.1.0-rc.1` creates a GitHub prerelease and reports the same version.
+- Nightly builds should use a unique version such as
+  `0.1.0-nightly.20260903.123` through `FAST_BUILD_VERSION`.
 
 ## Shell Integration
 

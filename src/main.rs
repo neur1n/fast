@@ -18,6 +18,10 @@ fn run() -> io::Result<i32> {
       cli::print_help();
       return Ok(0);
     }
+    Err(CliError::Version) => {
+      cli::print_version();
+      return Ok(0);
+    }
     Err(CliError::Invalid(message)) => {
       eprintln!("fast: {message}");
       eprintln!("Try `fast --help` for usage.");

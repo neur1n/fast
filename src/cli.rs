@@ -7,8 +7,14 @@ use std::{
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum CliError {
   Help,
+  Version,
   Invalid(String),
 }
+
+pub(crate) const BUILD_VERSION: &str = match option_env!("FAST_BUILD_VERSION") {
+  Some(version) if !version.is_empty() => version,
+  _ => env!("CARGO_PKG_VERSION"),
+};
 
 pub(crate) fn parse_args<I>(args: I) -> Result<Option<PathBuf>, CliError>
 where
@@ -24,6 +30,7 @@ where
     };
     match argument {
       "-h" | "--help" => return Err(CliError::Help),
+      "-V" | "--version" => return Err(CliError::Version),
       "--select" => {
         if selection_file.is_some() {
           return Err(CliError::Invalid(
@@ -66,14 +73,19 @@ pub(crate) fn write_selection_file(selection_file: &Path, selected_path: &Path) 
 }
 
 pub(crate) fn print_help() {
-  println!("Usage: fast [--select PATH]");
+  println!("Usage: fast [--version] [--select PATH]");
   println!();
   println!("Browse directories from the current working directory.");
+  println!("  -V, --version   print version information");
   println!("  --select PATH  write the selected directory on confirmation");
   println!();
   println!("  q          select the highlighted directory");
   println!("  /          filter names (fuzzy by default; Tab toggles simple/fuzzy)");
   println!("  Esc/Ctrl-C  cancel without selecting a directory");
+}
+
+pub(crate) fn print_version() {
+  println!("fast {BUILD_VERSION}");
 }
 
 #[cfg(test)]
@@ -84,6 +96,20 @@ mod tests {
   fn parses_select_argument() {
     let args = [OsString::from("--select"), OsString::from("result")];
     assert_eq!(parse_args(args), Ok(Some(PathBuf::from("result"))));
+  }
+
+  #[test]
+  fn parses_version_arguments() {
+    assert_eq!(
+      parse_args([OsString::from("--version")]),
+      Err(CliError::Version)
+    );
+    assert_eq!(parse_args([OsString::from("-V")]), Err(CliError::Version));
+  }
+
+  #[test]
+  fn build_version_is_not_empty() {
+    assert!(!BUILD_VERSION.is_empty());
   }
 
   #[test]
