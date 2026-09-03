@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: .project/review/REVIEW-0004-phase-3-navigation-ux.md
+review: .project/review/REVIEW-0006-navigation-default-selection-and-version-0.0.4.md
 ---
 
 # Roadmap: fast
@@ -59,6 +59,10 @@ system by default.
   are recorded in
   `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
   `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
+- Initial selection refinement and the `0.0.4` package candidate are implemented
+  and accepted in `REVIEW-0006`; their candidate tree and commit identifiers are
+  pending staging and commit. The work is governed by
+  `.project/decision/DECISION-0006-navigation-default-selection.md`.
 
 ## Phase
 
@@ -111,6 +115,18 @@ system by default.
 - Status: Completed and accepted in `REVIEW-0004`; the code commit and
   candidate tree identifiers are pending recording.
 - Dependency: phase-3-internal-filter-and-shell-integration
+
+### Phase 3 Follow-up: Default Selection Refinement and 0.0.4
+
+- Objective: Select the first actual child in directories without remembered
+  selection, preserve explicit movement during asynchronous scans, and release
+  the behavior as package version `0.0.4`.
+- Gate: First-child defaults, cache and chunk timing, remembered-path fallback,
+  manual movement priority, and synchronized version metadata pass automated
+  checks.
+- Status: Completed and accepted in `REVIEW-0006`; candidate tree and commit
+  identifiers remain pending staging and commit.
+- Dependency: phase-3-navigation-ux-refinements
 
 ### Phase 4: Bounded Child-Directory Prefetch
 

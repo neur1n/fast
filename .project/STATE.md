@@ -2,7 +2,7 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; version reporting accepted, Phase 3 and navigator UX follow-up accepted, Phase 4 prefetch deferred
+- Status: active; navigator default-selection 0.0.4 accepted, Phase 4 prefetch deferred
 - Last reconciled: 2026-09-03
 - Roadmap: .project/roadmap/ROADMAP-0001.md
 - Current phase: phase-4-bounded-prefetch
@@ -11,10 +11,9 @@
 
 ## Current Objective
 
-Prepare the reviewed navigator UX refinements for fuzzy-default filtering and
-process-local path-based selection restoration without changing the cache
-contract. Keep bounded child-directory prefetch deferred until a demonstrated
-need emerges.
+Revisit bounded child-directory prefetch only if measured workloads demonstrate
+that the current shallow, chunked scan behavior is insufficient. The accepted
+navigator selection refinement and package `0.0.4` remain unchanged.
 
 ## Last Completed
 
@@ -52,6 +51,13 @@ need emerges.
 - Implemented version reporting, release injection, and no-`v` release handling
   in `73e9786`; the package version is `0.0.3` and `Cargo.lock` is synchronized
   with `cargo check --offline`.
+- Accepted the revised first-child default and explicit-movement priority in
+  `DECISION-0006`; implementation is tracked by `PLAN-0006`.
+- Implemented the `PLAN-0006` candidate: first-child defaults, manual movement
+  priority, regression coverage, and synchronized `0.0.4` package metadata all
+  pass the recorded checks.
+- Accepted the `PLAN-0006` candidate in `REVIEW-0006`; its tree and commit
+  identifiers remain pending until the candidate is staged and committed.
 
 ## Next Action
 
@@ -60,10 +66,10 @@ need emerges.
 
 ## Blocker
 
-- Phase 4 prefetch remains deferred; no blocker is recorded for the completed
-  navigator UX follow-up.
+- Phase 4 prefetch remains deferred; no blocker is recorded for the accepted
+  navigator selection refinement.
 
 ## Pending Human Action
 
-- Commit the synchronized `Cargo.lock` and governance reconciliation, then fill
-  the resulting candidate tree and commit identifiers in `REVIEW-0005`.
+- Stage and commit the accepted `PLAN-0006` candidate, then record its tree and
+  commit identifiers in `REVIEW-0006`.
