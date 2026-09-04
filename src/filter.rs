@@ -51,12 +51,18 @@ pub(crate) fn fuzzy_indices(entries: &[DirectoryEntry], query: &str) -> Vec<usiz
       continue;
     }
     if let Some(score) = fuzzy_score(&entry.name, query) {
-      matches.push((score, index));
+      matches.push((entry.is_directory, score, index));
     }
   }
 
-  matches.sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-  navigation_indices.extend(matches.into_iter().map(|(_, index)| index));
+  matches.sort_unstable_by(|left, right| {
+    right
+      .0
+      .cmp(&left.0)
+      .then_with(|| right.1.cmp(&left.1))
+      .then_with(|| left.2.cmp(&right.2))
+  });
+  navigation_indices.extend(matches.into_iter().map(|(_, _, index)| index));
   navigation_indices
 }
 
@@ -102,9 +108,14 @@ mod tests {
   use std::path::PathBuf;
 
   fn entry(name: &str) -> DirectoryEntry {
+    entry_with_kind(name, true)
+  }
+
+  fn entry_with_kind(name: &str, is_directory: bool) -> DirectoryEntry {
     DirectoryEntry {
       name: name.to_owned(),
       path: PathBuf::from("/").join(name),
+      is_directory,
     }
   }
 
@@ -155,6 +166,16 @@ mod tests {
     let entries = [entry("a-b"), entry("ab")];
 
     assert_eq!(fuzzy_indices(&entries, "ab"), vec![1, 0]);
+  }
+
+  #[test]
+  fn fuzzy_matching_groups_directories_before_files() {
+    let entries = [
+      entry_with_kind("a-file", false),
+      entry_with_kind("z-directory", true),
+    ];
+
+    assert_eq!(fuzzy_indices(&entries, "e"), vec![1, 0]);
   }
 
   #[test]

@@ -81,6 +81,16 @@
   </li>
   <li>
     <details>
+      <summary><strong>On-demand file listing</strong></summary>
+      <p>
+        Press <code>F</code> to include files and other non-directory entries
+        from the current directory, but <code>fast</code> never launches files
+        or opens them through MIME associations.
+      </p>
+    </details>
+  </li>
+  <li>
+    <details>
       <summary><strong>Shell integration</strong></summary>
       <p>
         Bash, Zsh, and Nushell wrappers read the selected path and apply it
@@ -152,20 +162,33 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 
 ## Usage
 
-- **Cache directory:** Set `FAST_CACHE_DIR` to override the platform cache directory.
-- **Move:** Use `Up`/`Down` or `j`/`k` to move the selection.
-- **Jump:** Use `Home`/`g` for the first entry or `End`/`G` for the last entry.
+- **Cache directory:** Set `FAST_CACHE_DIR` to override the platform cache
+  directory.
 - **Default selection:** A new directory selects its first child after the
   `..` and `.` navigation entries. Empty directories fall back to `.`.
-- **Open:** Press `Enter`/`Right` or `l` to open the selected directory.
-- **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory (`..`).
-- **Current:** The `.` entry represents the current directory. Select it with `q` to finish in the current directory; opening it is a no-op.
+- **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory
+  (`..`).
+- **Current:** The `.` entry represents the current directory. Select it with
+  `q` to finish in the current directory; opening it is a no-op. Pressing `q`
+  on a file also finishes in the current directory.
+- **Files:** Press `F` in normal navigation mode to toggle direct child files
+  and other non-directory entries. Press it again to return to directory-only
+  mode. File-visible scans bypass the persistent directory cache.
+- **Move:** Use `Up`/`Down` or `j`/`k` to move the selection.
+- **Open:** Press `Enter`/`Right` or `l` to open the selected directory. These
+  keys have no effect on files or other non-directory entries.
+- **Jump:** Use `Home`/`g` for the first entry or `End`/`G` for the last entry.
+- **Select:** Press `q` to select the highlighted directory; on a file, it
+  selects the current directory instead.
+- **Cancel:** Press `Esc` to clear an active filter; press it again, or use
+  `Ctrl-C`, to cancel without selecting a directory.
 - **Rescan:** Press `r` to scan the current directory again.
-- **Select:** Press `q` to select the highlighted directory.
-- **Filter:** Press `/` to enter filter mode. Typed text uses fuzzy matching by default.
-- **Toggle filter:** Press `Tab` in filter mode to switch between fuzzy and simple matching.
-- **Edit filter:** Type to extend the query, use `Backspace` to edit it, and press `Enter` to keep the filter and return to navigation.
-- **Cancel:** Press `Esc` to clear an active filter; press it again, or use `Ctrl-C`, to cancel without selecting a directory.
+- **Filter:** Press `/` to enter filter mode. Typed text uses fuzzy matching by
+  default.
+- **Toggle filter:** Press `Tab` in filter mode to switch between fuzzy and
+  simple matching.
+- **Edit filter:** Type to extend the query, use `Backspace` to edit it, and
+  press `Enter` to keep the filter and return to navigation.
 
 ## License
 

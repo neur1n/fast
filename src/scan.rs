@@ -18,6 +18,7 @@ const CHANNEL_CAPACITY: usize = 4;
 pub struct DirectoryEntry {
   pub name: String,
   pub path: PathBuf,
+  pub is_directory: bool,
 }
 
 #[derive(Debug)]
@@ -34,13 +35,13 @@ pub struct ScanHandle {
 }
 
 impl ScanHandle {
-  pub fn start(path: PathBuf) -> io::Result<Self> {
+  pub fn start(path: PathBuf, include_files: bool) -> io::Result<Self> {
     let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = Arc::clone(&cancel);
     let worker = thread::Builder::new()
       .name("fast-directory-scan".to_owned())
-      .spawn(move || scan_directory(path, sender, worker_cancel))?;
+      .spawn(move || scan_directory(path, sender, worker_cancel, include_files))?;
 
     Ok(Self {
       receiver,
@@ -68,7 +69,12 @@ impl Drop for ScanHandle {
   }
 }
 
-fn scan_directory(path: PathBuf, sender: SyncSender<ScanEvent>, cancel: Arc<AtomicBool>) {
+fn scan_directory(
+  path: PathBuf,
+  sender: SyncSender<ScanEvent>,
+  cancel: Arc<AtomicBool>,
+  include_files: bool,
+) {
   let directory = match fs::read_dir(&path) {
     Ok(directory) => directory,
     Err(error) => {
@@ -94,13 +100,14 @@ fn scan_directory(path: PathBuf, sender: SyncSender<ScanEvent>, cancel: Arc<Atom
     };
     let path = entry.path();
     let is_directory = file_type.is_dir() || (file_type.is_symlink() && path.is_dir());
-    if !is_directory {
+    if !is_directory && !include_files {
       continue;
     }
 
     chunk.push(DirectoryEntry {
       name: entry.file_name().to_string_lossy().into_owned(),
       path,
+      is_directory,
     });
     if chunk.len() == CHUNK_SIZE {
       if !send_event(&sender, ScanEvent::Chunk(chunk), &cancel) {
@@ -182,20 +189,25 @@ mod tests {
 
     let (sender, receiver) = mpsc::sync_channel(2);
     let cancel = Arc::new(AtomicBool::new(false));
-    scan_directory(root.0.clone(), sender, Arc::clone(&cancel));
+    scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
 
-    let mut names = Vec::new();
+    let mut entries = Vec::new();
     let mut finished = false;
     while let Ok(event) = receiver.try_recv() {
       match event {
-        ScanEvent::Chunk(entries) => names.extend(entries.into_iter().map(|entry| entry.name)),
+        ScanEvent::Chunk(chunk) => entries.extend(chunk),
         ScanEvent::Finished => finished = true,
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
     }
 
+    let mut names = entries
+      .iter()
+      .map(|entry| entry.name.as_str())
+      .collect::<Vec<_>>();
     names.sort();
     assert_eq!(names, ["a-directory", "z-directory"]);
+    assert!(entries.iter().all(|entry| entry.is_directory));
     assert!(finished);
   }
 
@@ -211,7 +223,7 @@ mod tests {
     ));
     let (sender, receiver) = mpsc::sync_channel(2);
     let cancel = Arc::new(AtomicBool::new(false));
-    scan_directory(missing, sender, Arc::clone(&cancel));
+    scan_directory(missing, sender, Arc::clone(&cancel), false);
 
     match receiver.try_recv().expect("scan error should be sent") {
       ScanEvent::Error(message) => assert!(message.contains("unable to read")),
@@ -229,7 +241,7 @@ mod tests {
 
     let (sender, receiver) = mpsc::sync_channel(4);
     let cancel = Arc::new(AtomicBool::new(false));
-    scan_directory(root.0.clone(), sender, Arc::clone(&cancel));
+    scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
 
     let mut chunk_count = 0;
     let mut entry_count = 0;
@@ -255,8 +267,66 @@ mod tests {
     let root = TemporaryDirectory::new();
     let (sender, receiver) = mpsc::sync_channel(2);
     let cancel = Arc::new(AtomicBool::new(true));
-    scan_directory(root.0.clone(), sender, Arc::clone(&cancel));
+    scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
 
     assert!(receiver.try_recv().is_err());
+  }
+
+  #[test]
+  fn includes_files_when_requested() {
+    let root = TemporaryDirectory::new();
+    fs::create_dir(root.0.join("directory")).expect("directory should be created");
+    File::create(root.0.join("file.txt")).expect("file should be created");
+
+    let (sender, receiver) = mpsc::sync_channel(2);
+    let cancel = Arc::new(AtomicBool::new(false));
+    scan_directory(root.0.clone(), sender, Arc::clone(&cancel), true);
+
+    let mut entries = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+      match event {
+        ScanEvent::Chunk(chunk) => entries.extend(chunk),
+        ScanEvent::Finished => {}
+        ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
+      }
+    }
+
+    entries.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].name, "directory");
+    assert!(entries[0].is_directory);
+    assert_eq!(entries[1].name, "file.txt");
+    assert!(!entries[1].is_directory);
+  }
+
+  #[test]
+  fn file_entries_are_emitted_in_chunks() {
+    let root = TemporaryDirectory::new();
+    for index in 0..(CHUNK_SIZE + 1) {
+      File::create(root.0.join(format!("file-{index:03}.txt"))).expect("file should be created");
+    }
+
+    let (sender, receiver) = mpsc::sync_channel(4);
+    let cancel = Arc::new(AtomicBool::new(false));
+    scan_directory(root.0.clone(), sender, Arc::clone(&cancel), true);
+
+    let mut chunk_count = 0;
+    let mut entry_count = 0;
+    let mut finished = false;
+    while let Ok(event) = receiver.try_recv() {
+      match event {
+        ScanEvent::Chunk(entries) => {
+          chunk_count += 1;
+          entry_count += entries.len();
+          assert!(entries.iter().all(|entry| !entry.is_directory));
+        }
+        ScanEvent::Finished => finished = true,
+        ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
+      }
+    }
+
+    assert_eq!(entry_count, CHUNK_SIZE + 1);
+    assert_eq!(chunk_count, 2);
+    assert!(finished);
   }
 }

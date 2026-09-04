@@ -112,6 +112,9 @@ impl DirectoryCache {
     {
       return Err(invalid_cache("cache contains a non-child directory"));
     }
+    if record.entries.iter().any(|entry| !entry.is_directory) {
+      return Err(invalid_cache("cache contains a non-directory entry"));
+    }
     Ok(Some(record.entries))
   }
 
@@ -281,6 +284,9 @@ fn encode_record(record: &CacheRecord) -> io::Result<Vec<u8>> {
     if entry.path.parent() != Some(record.directory.as_path()) {
       return Err(invalid_cache("cache entry is not a direct child"));
     }
+    if !entry.is_directory {
+      return Err(invalid_cache("cache entry is not a directory"));
+    }
     push_string(&mut body, &entry.name)?;
     push_path(&mut body, &entry.path)?;
   }
@@ -351,6 +357,7 @@ fn decode_record(bytes: &[u8]) -> io::Result<CacheRecord> {
     entries.push(DirectoryEntry {
       name: reader.string()?,
       path: PathBuf::from(reader.string()?),
+      is_directory: true,
     });
   }
   if !reader.is_empty() {
@@ -499,6 +506,7 @@ mod tests {
     DirectoryEntry {
       name: name.to_owned(),
       path: directory.join(name),
+      is_directory: true,
     }
   }
 

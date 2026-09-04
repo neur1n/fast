@@ -23,6 +23,7 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(crate) struct App {
   current_dir: PathBuf,
+  show_files: bool,
   entries: Vec<DirectoryEntry>,
   visible_indices: Vec<usize>,
   selected: usize,
@@ -67,6 +68,7 @@ impl App {
   fn with_cache(current_dir: PathBuf, cache: Option<DirectoryCache>) -> Self {
     let mut app = Self {
       current_dir,
+      show_files: false,
       entries: Vec::new(),
       visible_indices: Vec::new(),
       selected: 0,
@@ -125,7 +127,13 @@ impl App {
         self.filter_mode = true;
         None
       }
-      KeyCode::Char('q') | KeyCode::Char('Q') => self.selected_path().map(ExitAction::Select),
+      KeyCode::Char('F') => {
+        self.toggle_files();
+        None
+      }
+      KeyCode::Char('q') | KeyCode::Char('Q') => {
+        self.selected_result_path().map(ExitAction::Select)
+      }
       KeyCode::Up | KeyCode::Char('k') => {
         self.move_selection(-1);
         None
@@ -291,7 +299,8 @@ impl App {
     self.select_first_child_or_navigation();
     self.try_restore_pending_selection();
 
-    if let Some(cache) = self.cache.as_ref()
+    if !self.show_files
+      && let Some(cache) = self.cache.as_ref()
       && let Ok(Some(entries)) = cache.load(&self.current_dir)
     {
       self.entries.extend(entries);
@@ -302,12 +311,16 @@ impl App {
       return;
     }
 
-    self.scan_fingerprint = self
-      .cache
-      .as_ref()
-      .and_then(|_| DirectoryCache::fingerprint(&self.current_dir).ok());
+    self.scan_fingerprint = if self.show_files {
+      None
+    } else {
+      self
+        .cache
+        .as_ref()
+        .and_then(|_| DirectoryCache::fingerprint(&self.current_dir).ok())
+    };
 
-    match ScanHandle::start(self.current_dir.clone()) {
+    match ScanHandle::start(self.current_dir.clone(), self.show_files) {
       Ok(scan) => self.scan = Some(scan),
       Err(error) => self.status = ScanStatus::Error(format!("unable to start scanner: {error}")),
     }
@@ -321,6 +334,9 @@ impl App {
   }
 
   fn persist_scan(&self) {
+    if self.show_files {
+      return;
+    }
     let (Some(cache), Some(before)) = (self.cache.as_ref(), self.scan_fingerprint.as_ref()) else {
       return;
     };
@@ -328,13 +344,20 @@ impl App {
     let _ = cache.store_if_unchanged(&self.current_dir, before, &self.entries[navigation_count..]);
   }
 
+  fn toggle_files(&mut self) {
+    self.remember_selection();
+    self.show_files = !self.show_files;
+    self.start_scan();
+  }
+
   fn open_selected(&mut self) {
-    let Some(path) = self.selected_path() else {
+    let Some(entry) = self.selected_entry().cloned() else {
       return;
     };
-    if path == self.current_dir {
+    if !entry.is_directory || entry.path == self.current_dir {
       return;
     }
+    let path = entry.path;
     let previous_dir = self.current_dir.clone();
     let returning_to_parent = previous_dir
       .parent()
@@ -382,11 +405,23 @@ impl App {
   }
 
   fn selected_path(&self) -> Option<PathBuf> {
+    self.selected_entry().map(|entry| entry.path.clone())
+  }
+
+  fn selected_result_path(&self) -> Option<PathBuf> {
+    let entry = self.selected_entry()?;
+    if entry.is_directory {
+      Some(entry.path.clone())
+    } else {
+      Some(self.current_dir.clone())
+    }
+  }
+
+  fn selected_entry(&self) -> Option<&DirectoryEntry> {
     self
       .visible_indices
       .get(self.selected)
       .and_then(|&index| self.entries.get(index))
-      .map(|entry| entry.path.clone())
   }
 
   fn remember_selection(&mut self) {
@@ -419,11 +454,40 @@ impl App {
   fn sort_entries(&mut self) {
     let navigation_count = self.navigation_count();
     self.entries[navigation_count..].sort_unstable_by(|left, right| {
-      left
-        .name
-        .cmp(&right.name)
-        .then_with(|| left.path.cmp(&right.path))
+      right.is_directory.cmp(&left.is_directory).then_with(|| {
+        left
+          .name
+          .cmp(&right.name)
+          .then_with(|| left.path.cmp(&right.path))
+      })
     });
+  }
+
+  fn files_position(&self) -> Option<usize> {
+    if !self.show_files {
+      return None;
+    }
+    // Sorting and filtering keep directories before non-directory entries.
+    let position = self
+      .visible_indices
+      .partition_point(|&index| self.entries[index].is_directory);
+    self
+      .visible_indices
+      .get(position)
+      .is_some_and(|&index| !self.entries[index].is_directory)
+      .then_some(position)
+  }
+
+  fn selected_row(&self, files_position: Option<usize>) -> usize {
+    self.selected + usize::from(files_position.is_some_and(|position| position <= self.selected))
+  }
+
+  fn entry_color(entry: &DirectoryEntry) -> Color {
+    if entry.is_directory {
+      Color::White
+    } else {
+      Color::DarkGrey
+    }
   }
 
   fn restore_selection(&mut self, previous_path: Option<&Path>) {
@@ -450,7 +514,7 @@ impl App {
     self
       .visible_indices
       .iter()
-      .position(|&index| index >= navigation_count)
+      .position(|&index| index >= navigation_count && self.entries[index].is_directory)
   }
 
   fn navigation_position(&self) -> Option<usize> {
@@ -525,9 +589,25 @@ impl App {
     )?;
 
     let list_height = height.saturating_sub(3) as usize;
-    let scroll_start = self.scroll_start(list_height);
+    let files_position = self.files_position();
+    let selected_row = self.selected_row(files_position);
+    let scroll_start = self.scroll_start(list_height, selected_row);
     for row in 0..list_height {
-      let index = scroll_start + row;
+      let row_index = scroll_start + row;
+      if files_position == Some(row_index) {
+        put_line(
+          output,
+          row as u16 + 2,
+          " -- Files --",
+          width,
+          Color::DarkGrey,
+          false,
+        )?;
+        continue;
+      }
+      let index = row_index.saturating_sub(usize::from(
+        files_position.is_some_and(|position| row_index > position),
+      ));
       let Some(&entry_index) = self.visible_indices.get(index) else {
         put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
         continue;
@@ -542,7 +622,7 @@ impl App {
         row as u16 + 2,
         &format!("{marker}{}", entry.name),
         width,
-        Color::White,
+        Self::entry_color(entry),
         index == self.selected,
       )?;
     }
@@ -562,11 +642,12 @@ impl App {
     let status = match &self.status {
       ScanStatus::Indexing => {
         format!(
-          " Indexing... {} directories discovered",
-          self.discovered_count()
+          " Indexing... {} {} discovered",
+          self.discovered_count(),
+          self.entry_label()
         )
       }
-      ScanStatus::Ready => format!(" Ready  {} directories", self.discovered_count()),
+      ScanStatus::Ready => format!(" Ready  {} {}", self.discovered_count(), self.entry_label()),
       ScanStatus::Error(error) => format!(" Error  {error}"),
     };
     if self.filter_mode {
@@ -622,19 +703,31 @@ impl App {
       " Type to filter  Tab toggle mode  Backspace edit  Enter keep  Esc clear  Ctrl-C cancel"
         .to_owned()
     } else if self.filter_query.is_empty() {
-      " / filter  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc cancel"
-        .to_owned()
+      format!(
+        " / filter  Up/Down or j/k  Enter/l open  F files {}  Backspace/h parent  r rescan  q select  Esc cancel",
+        if self.show_files { "on" } else { "off" }
+      )
     } else {
-      " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  Backspace/h parent  r rescan  q select  Esc clear"
-        .to_owned()
+      format!(
+        " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  F files {}  Backspace/h parent  r rescan  q select  Esc clear",
+        if self.show_files { "on" } else { "off" }
+      )
     }
   }
 
-  fn scroll_start(&self, list_height: usize) -> usize {
+  fn entry_label(&self) -> &'static str {
+    if self.show_files {
+      "entries"
+    } else {
+      "directories"
+    }
+  }
+
+  fn scroll_start(&self, list_height: usize, selected_row: usize) -> usize {
     if list_height == 0 {
       return 0;
     }
-    self.selected.saturating_sub(list_height.saturating_sub(1))
+    selected_row.saturating_sub(list_height.saturating_sub(1))
   }
 }
 
@@ -646,6 +739,7 @@ fn parent_entry(path: &Path) -> Option<DirectoryEntry> {
   Some(DirectoryEntry {
     name: "..".to_owned(),
     path: parent.to_path_buf(),
+    is_directory: true,
   })
 }
 
@@ -657,6 +751,7 @@ fn navigation_entries(path: &Path) -> Vec<DirectoryEntry> {
   entries.push(DirectoryEntry {
     name: ".".to_owned(),
     path: path.to_path_buf(),
+    is_directory: true,
   });
   entries
 }
@@ -695,6 +790,7 @@ mod tests {
     let visible_indices = (0..entries.len()).collect();
     App {
       current_dir,
+      show_files: false,
       entries,
       visible_indices,
       selected,
@@ -715,9 +811,11 @@ mod tests {
     let selected_path = current_dir.join("target");
     let mut app = App {
       current_dir,
+      show_files: false,
       entries: vec![DirectoryEntry {
         name: "target".to_owned(),
         path: selected_path.clone(),
+        is_directory: true,
       }],
       visible_indices: vec![0],
       selected: 0,
@@ -739,6 +837,154 @@ mod tests {
   }
 
   #[test]
+  fn q_on_a_file_selects_the_current_directory() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(
+      current_dir.clone(),
+      vec![DirectoryEntry {
+        name: "file.txt".to_owned(),
+        path: current_dir.join("file.txt"),
+        is_directory: false,
+      }],
+      0,
+    );
+    app.show_files = true;
+
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+
+    assert!(matches!(action, Some(ExitAction::Select(path)) if path == current_dir));
+  }
+
+  #[test]
+  fn opening_a_file_with_enter_right_or_l_is_a_no_op() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(
+      current_dir.clone(),
+      vec![DirectoryEntry {
+        name: "file.txt".to_owned(),
+        path: current_dir.join("file.txt"),
+        is_directory: false,
+      }],
+      0,
+    );
+    app.show_files = true;
+
+    for key_code in [KeyCode::Enter, KeyCode::Right, KeyCode::Char('l')] {
+      app.handle_key(KeyEvent::new(key_code, KeyModifiers::NONE));
+      assert_eq!(app.current_dir, current_dir);
+      assert!(app.scan.is_none());
+      assert!(matches!(app.status, ScanStatus::Ready));
+    }
+  }
+
+  #[test]
+  fn uppercase_f_replaces_the_active_listing_mode() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir, Vec::new(), 0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
+    assert!(app.show_files);
+    assert!(matches!(app.status, ScanStatus::Indexing));
+    app.stop_scan();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
+    assert!(!app.show_files);
+    assert!(matches!(app.status, ScanStatus::Indexing));
+    app.stop_scan();
+  }
+
+  #[test]
+  fn h_remains_the_parent_navigation_shortcut() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir, Vec::new(), 0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+
+    assert_eq!(app.current_dir, PathBuf::from("/tmp"));
+    app.stop_scan();
+  }
+
+  #[test]
+  fn mixed_listings_default_to_the_first_directory() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.show_files = true;
+    app.selection.pending = Some(PendingSelection::FirstChild);
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![
+      DirectoryEntry {
+        name: "a-file".to_owned(),
+        path: current_dir.join("a-file"),
+        is_directory: false,
+      },
+      DirectoryEntry {
+        name: "z-directory".to_owned(),
+        path: current_dir.join("z-directory"),
+        is_directory: true,
+      },
+    ]));
+
+    assert_eq!(app.selected_path(), Some(current_dir.join("z-directory")));
+  }
+
+  #[test]
+  fn directories_are_sorted_before_files_and_files_get_a_header_row() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut entries = navigation_entries(&current_dir);
+    entries.extend([
+      DirectoryEntry {
+        name: "z-file".to_owned(),
+        path: current_dir.join("z-file"),
+        is_directory: false,
+      },
+      DirectoryEntry {
+        name: "a-directory".to_owned(),
+        path: current_dir.join("a-directory"),
+        is_directory: true,
+      },
+    ]);
+    let mut app = app_with_entries(current_dir, entries, 0);
+    app.show_files = true;
+    app.sort_entries();
+    app.refresh_visible();
+
+    let names = app
+      .visible_indices
+      .iter()
+      .map(|&index| app.entries[index].name.as_str())
+      .collect::<Vec<_>>();
+    assert_eq!(names, vec!["..", ".", "a-directory", "z-file"]);
+    assert_eq!(app.files_position(), Some(3));
+    assert_eq!(app.selected_row(app.files_position()), 0);
+
+    app.selected = 3;
+    assert_eq!(app.selected_row(app.files_position()), 4);
+    assert_eq!(
+      app.scroll_start(3, app.selected_row(app.files_position())),
+      2
+    );
+    assert_eq!(App::entry_color(&app.entries[3]), Color::DarkGrey);
+    assert_eq!(App::entry_color(&app.entries[2]), Color::White);
+  }
+
+  #[test]
+  fn file_only_listings_fall_back_to_the_current_directory() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    app.show_files = true;
+    app.selection.pending = Some(PendingSelection::FirstChild);
+
+    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
+      name: "file.txt".to_owned(),
+      path: current_dir.join("file.txt"),
+      is_directory: false,
+    }]));
+    app.apply_scan_event(ScanEvent::Finished);
+
+    assert_eq!(app.selected_path(), Some(current_dir));
+  }
+
+  #[test]
   fn navigation_entries_include_the_current_directory() {
     let current_dir = PathBuf::from("/tmp/current");
 
@@ -748,10 +994,12 @@ mod tests {
         DirectoryEntry {
           name: "..".to_owned(),
           path: PathBuf::from("/tmp"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: ".".to_owned(),
           path: current_dir,
+          is_directory: true,
         },
       ]
     );
@@ -771,6 +1019,7 @@ mod tests {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = App {
       current_dir: current_dir.clone(),
+      show_files: false,
       entries: navigation_entries(&current_dir),
       visible_indices: vec![0, 1],
       selected: 1,
@@ -794,6 +1043,7 @@ mod tests {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = App {
       current_dir: current_dir.clone(),
+      show_files: false,
       entries: navigation_entries(&current_dir),
       visible_indices: vec![0, 1],
       selected: 1,
@@ -819,22 +1069,27 @@ mod tests {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = App {
       current_dir: current_dir.clone(),
+      show_files: false,
       entries: vec![
         DirectoryEntry {
           name: "..".to_owned(),
           path: PathBuf::from("/tmp"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: ".".to_owned(),
           path: current_dir.clone(),
+          is_directory: true,
         },
         DirectoryEntry {
           name: "Target".to_owned(),
           path: current_dir.join("Target"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: "logs".to_owned(),
           path: current_dir.join("logs"),
+          is_directory: true,
         },
       ],
       visible_indices: Vec::new(),
@@ -867,9 +1122,11 @@ mod tests {
   fn empty_results_cannot_select_the_current_directory() {
     let mut app = App {
       current_dir: PathBuf::from("/"),
+      show_files: false,
       entries: vec![DirectoryEntry {
         name: "target".to_owned(),
         path: PathBuf::from("/target"),
+        is_directory: true,
       }],
       visible_indices: Vec::new(),
       selected: 0,
@@ -899,14 +1156,17 @@ mod tests {
     let selected_path = current_dir.join("logs");
     let mut app = App {
       current_dir: current_dir.clone(),
+      show_files: false,
       entries: vec![
         DirectoryEntry {
           name: "target".to_owned(),
           path: current_dir.join("target"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: "logs".to_owned(),
           path: selected_path.clone(),
+          is_directory: true,
         },
       ],
       visible_indices: Vec::new(),
@@ -932,14 +1192,17 @@ mod tests {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = App {
       current_dir: current_dir.clone(),
+      show_files: false,
       entries: vec![
         DirectoryEntry {
           name: "target".to_owned(),
           path: current_dir.join("target"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: "logs".to_owned(),
           path: current_dir.join("logs"),
+          is_directory: true,
         },
       ],
       visible_indices: Vec::new(),
@@ -989,18 +1252,22 @@ mod tests {
     let selected_path = current_dir.join("alpha");
     let mut app = App {
       current_dir: current_dir.clone(),
+      show_files: false,
       entries: vec![
         DirectoryEntry {
           name: "..".to_owned(),
           path: PathBuf::from("/tmp"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: ".".to_owned(),
           path: current_dir.clone(),
+          is_directory: true,
         },
         DirectoryEntry {
           name: "alpha".to_owned(),
           path: selected_path.clone(),
+          is_directory: true,
         },
       ],
       visible_indices: Vec::new(),
@@ -1019,6 +1286,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "beta".to_owned(),
       path: current_dir.join("beta"),
+      is_directory: true,
     }]));
 
     assert_eq!(app.entries.len(), 4);
@@ -1036,10 +1304,12 @@ mod tests {
       DirectoryEntry {
         name: "beta".to_owned(),
         path: current_dir.join("beta"),
+        is_directory: true,
       },
       DirectoryEntry {
         name: "alpha".to_owned(),
         path: current_dir.join("alpha"),
+        is_directory: true,
       },
     ]));
 
@@ -1056,6 +1326,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "alpha".to_owned(),
       path: current_dir.join("alpha"),
+      is_directory: true,
     }]));
 
     assert_eq!(app.selected_path(), Some(current_dir.join("alpha")));
@@ -1086,6 +1357,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "alpha".to_owned(),
       path: current_dir.join("alpha"),
+      is_directory: true,
     }]));
 
     assert_eq!(app.selected_path(), Some(current_dir));
@@ -1101,6 +1373,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "alpha".to_owned(),
       path: current_dir.join("alpha"),
+      is_directory: true,
     }]));
     assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
 
@@ -1110,6 +1383,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "alpha".to_owned(),
       path: current_dir.join("alpha"),
+      is_directory: true,
     }]));
     assert_eq!(app.selected_path(), Some(current_dir));
   }
@@ -1124,14 +1398,17 @@ mod tests {
         DirectoryEntry {
           name: "..".to_owned(),
           path: PathBuf::from("/tmp"),
+          is_directory: true,
         },
         DirectoryEntry {
           name: ".".to_owned(),
           path: current_dir.clone(),
+          is_directory: true,
         },
         DirectoryEntry {
           name: "child".to_owned(),
           path: child.clone(),
+          is_directory: true,
         },
       ],
       2,
@@ -1147,6 +1424,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "child".to_owned(),
       path: child.clone(),
+      is_directory: true,
     }]));
 
     assert_eq!(app.selected_path(), Some(child));
@@ -1167,12 +1445,14 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "other".to_owned(),
       path: PathBuf::from("/tmp/current/other"),
+      is_directory: true,
     }]));
     assert_eq!(app.selected_path(), Some(current_dir.clone()));
 
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "target".to_owned(),
       path: selected_path.clone(),
+      is_directory: true,
     }]));
     assert_eq!(app.selected_path(), Some(selected_path));
   }
@@ -1191,6 +1471,7 @@ mod tests {
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "other".to_owned(),
       path: current_dir.join("other"),
+      is_directory: true,
     }]));
     app.apply_scan_event(ScanEvent::Finished);
 
@@ -1216,6 +1497,7 @@ mod tests {
     let entries = vec![DirectoryEntry {
       name: "child".to_owned(),
       path: child.clone(),
+      is_directory: true,
     }];
     let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
     assert!(
@@ -1279,6 +1561,7 @@ mod tests {
     let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
     let mut app = App {
       current_dir: directory.clone(),
+      show_files: false,
       entries: navigation_entries(&directory),
       visible_indices: Vec::new(),
       selected: 0,
@@ -1294,6 +1577,7 @@ mod tests {
     app.entries.push(DirectoryEntry {
       name: "child".to_owned(),
       path: child.clone(),
+      is_directory: true,
     });
 
     app.persist_scan();
@@ -1303,8 +1587,104 @@ mod tests {
       Some(vec![DirectoryEntry {
         name: "child".to_owned(),
         path: child,
+        is_directory: true,
       }])
     );
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn file_visible_scan_does_not_write_to_the_directory_cache() {
+    let root = std::env::temp_dir().join(format!(
+      "fast-app-file-cache-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    let directory = root.join("workspace");
+    let cache = DirectoryCache::new(root.join("cache"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("file.txt");
+    std::fs::write(&file, b"content").unwrap();
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    let mut app = App {
+      current_dir: directory.clone(),
+      show_files: true,
+      entries: navigation_entries(&directory),
+      visible_indices: vec![0, 1],
+      selected: 1,
+      filter_query: String::new(),
+      filter_kind: FilterKind::default(),
+      filter_mode: false,
+      cache: Some(cache.clone()),
+      scan: None,
+      scan_fingerprint: Some(fingerprint),
+      selection: SelectionState::default(),
+      status: ScanStatus::Ready,
+    };
+    app.entries.push(DirectoryEntry {
+      name: "file.txt".to_owned(),
+      path: file,
+      is_directory: false,
+    });
+
+    app.persist_scan();
+
+    assert_eq!(cache.load(&directory).unwrap(), None);
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn file_visible_scan_ignores_directory_cache() {
+    let root = std::env::temp_dir().join(format!(
+      "fast-app-file-cache-read-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    let directory = root.join("workspace");
+    let child = directory.join("child");
+    let cache = DirectoryCache::new(root.join("cache"));
+    std::fs::create_dir_all(&child).unwrap();
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    assert!(
+      cache
+        .store_if_unchanged(
+          &directory,
+          &fingerprint,
+          &[DirectoryEntry {
+            name: "child".to_owned(),
+            path: child,
+            is_directory: true,
+          }],
+        )
+        .unwrap()
+    );
+
+    let mut app = App {
+      current_dir: directory.clone(),
+      show_files: true,
+      entries: navigation_entries(&directory),
+      visible_indices: vec![0, 1],
+      selected: 1,
+      filter_query: String::new(),
+      filter_kind: FilterKind::default(),
+      filter_mode: false,
+      cache: Some(cache),
+      scan: None,
+      scan_fingerprint: None,
+      selection: SelectionState::default(),
+      status: ScanStatus::Ready,
+    };
+
+    app.start_scan();
+
+    assert!(app.scan.is_some());
+    app.stop_scan();
     let _ = std::fs::remove_dir_all(root);
   }
 }
