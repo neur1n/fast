@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: .project/review/REVIEW-0006-navigation-default-selection-and-version-0.0.4.md
+review: .project/review/REVIEW-0008-file-visibility-version-0.0.5.md
 ---
 
 # Roadmap: fast
@@ -63,6 +63,11 @@ system by default.
   and accepted in `REVIEW-0006`; their candidate tree and commit identifiers are
   pending staging and commit. The work is governed by
   `.project/decision/DECISION-0006-navigation-default-selection.md`.
+- On-demand file visibility and browse-only confirmation are implemented and
+  accepted in `REVIEW-0007`; directory-first grouping, a Files label, dimmed
+  file rows, and the exact candidate tree and commit are recorded there. The
+  synchronized `0.0.5` package metadata and governance follow-up are pending
+  exact-tree review in `REVIEW-0008`.
 
 ## Phase
 
@@ -128,6 +133,19 @@ system by default.
   identifiers remain pending staging and commit.
 - Dependency: phase-3-navigation-ux-refinements
 
+### Phase 3 Follow-up: File Visibility
+
+- Objective: Show direct non-directory entries on demand while keeping the
+  navigator browse-only, shallow, chunked, and compatible with the directory
+  cache and shell selection protocol.
+- Gate: Runtime visibility toggling, mixed file/directory chunking, safe
+  non-directory actions, directory-first grouping, Files labeling, cache
+  isolation, and documentation pass automated checks.
+- Status: Runtime implementation completed and accepted in `REVIEW-0007`;
+  synchronized `0.0.5` package metadata is pending exact-tree review in
+  `REVIEW-0008`.
+- Dependency: phase-3-navigation-ux-default-selection
+
 ### Phase 4: Bounded Child-Directory Prefetch
 
 - Objective: Add bounded, cancellable prefetch for direct child-directory
@@ -141,9 +159,11 @@ system by default.
 ## Assumption
 
 - Rust is the proposed initial implementation language.
-- The initial browser lists directories only and does not support mouse input.
-- The default scan is shallow; the deferred prefetch is bounded and cancellable.
-  Simple and fuzzy filtering are built in; external `fzf` remains out of scope.
+- The initial browser starts with directories only and does not support mouse
+  input; direct non-directory entries can be shown with the runtime `F` toggle.
+- Every foreground scan is shallow; the deferred prefetch is bounded and
+  cancellable. Simple and fuzzy filtering are built in; external `fzf` remains
+  out of scope.
 - The initial supported character set is UTF-8 with core cross-platform path
   and link behavior only.
 - SQLite remains an implementation option; if selected, it must be bundled so
