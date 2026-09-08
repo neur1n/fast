@@ -1,6 +1,6 @@
 ---
 id: PLAN-0007
-status: implemented
+status: completed
 roadmap: ROADMAP-0001
 phase: phase-3-file-visibility
 issue: []
@@ -130,5 +130,7 @@ the feature as package version `0.0.5`.
   `9b264a4922ec04eef6d461718ecfbfab84efeb1b` in `REVIEW-0007`.
 - The root package metadata is synchronized to `0.0.5`; `cargo test --locked`,
   `cargo check --locked`, and `cargo run --quiet -- --version` report the
-  expected version. The metadata and governance follow-up remains pending in
+  expected version. The metadata and governance reconciliation is recorded in
   `REVIEW-0008`.
+- The subsequent logical symlink path fix is tracked independently by
+  `PLAN-0008` and does not change the file-visibility contract.

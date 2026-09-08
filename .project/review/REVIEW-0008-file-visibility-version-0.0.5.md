@@ -1,10 +1,10 @@
 ---
 id: REVIEW-0008
-status: pending
+status: approved
 type: implementation
 target: PLAN-0007
 base_commit: 2d545386f4b11eabecc66c5bde1e35fc51b35e05
-candidate_tree: pending
+candidate_tree: 64925c7d01c6349e57c64b939a46a2976d21e02b
 scope:
   - Synchronized root package version `0.0.5` in Cargo metadata
   - Reconciled the file-visibility plan, roadmap, state, and review records
@@ -21,10 +21,10 @@ staged_paths:
   - .project/review/REVIEW-0008-file-visibility-version-0.0.5.md
 reviewer: human reviewer
 date: 2026-09-04
-provenance: Human supplied synchronized `0.0.5` Cargo metadata; exact-tree review is pending.
-verdict: pending
-transition: Accept the synchronized `0.0.5` metadata after human staging and exact-tree review, then complete PLAN-0007 and advance to the deferred Phase 4 prefetch plan.
-candidate_commit: pending
+provenance: The synchronized `0.0.5` Cargo metadata and governance reconciliation were committed in the recorded candidate.
+verdict: approve
+transition: Complete PLAN-0007 and advance project navigation to the logical symlink path follow-up and then the deferred Phase 4 prefetch plan.
+candidate_commit: 518b86431a01e8e4806aa0daf12dd67a68f38273
 ---
 
 # Review: File Visibility Version 0.0.5
@@ -36,21 +36,22 @@ candidate_commit: pending
 - `cargo test --locked` passed with 57 tests.
 - `cargo check --locked` passed.
 - `cargo run --quiet -- --version` reported `fast 0.0.5`.
-- The implementation commit remains `2d545386f4b11eabecc66c5bde1e35fc51b35e05`
-  with tree `9b264a4922ec04eef6d461718ecfbfab84efeb1b`; this follow-up candidate
-  is based on that commit and adds only the version metadata and governance
-  reconciliation.
+- The implementation commit is `2d545386f4b11eabecc66c5bde1e35fc51b35e05`
+  with tree `9b264a4922ec04eef6d461718ecfbfab84efeb1b`. The follow-up candidate
+  is commit `518b86431a01e8e4806aa0daf12dd67a68f38273` with tree
+  `64925c7d01c6349e57c64b939a46a2976d21e02b` and adds the version metadata and
+  governance reconciliation.
 
 ## Human Finding
 
 - The human supplied synchronized `0.0.5` package metadata after the accepted
   file-visibility implementation was committed.
-- Human exact-tree staging and approval of this follow-up candidate are pending.
+- The committed follow-up candidate is accepted and its commit and tree
+  identifiers are recorded above.
 
 ## Condition
 
-- blocking: the follow-up candidate tree and commit identifiers are pending
-  human staging, `git write-tree`, review, and commit.
+- blocking: none.
 - non-blocking: none recorded.
 
 ## Agent Assessment
@@ -59,8 +60,10 @@ candidate_commit: pending
   confirm that the version bump does not require dependency resolution changes.
 - The prior REVIEW-0007 implementation approval remains valid for the code
   commit; this review covers the later package metadata and governance change.
+- The synchronized metadata is now the accepted `0.0.5` baseline for the
+  logical symlink path fix in `PLAN-0008`.
 
 ## Human Decision
 
-- Pending human exact-tree review of the synchronized `0.0.5` metadata and the
-  accompanying governance reconciliation.
+- Approve the synchronized `0.0.5` metadata and governance reconciliation, then
+  advance to `PLAN-0008`.

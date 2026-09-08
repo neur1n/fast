@@ -117,4 +117,6 @@ restoration and parent navigation. Release the change as package version
   -D warnings`, `cargo test --locked`, `cargo check --locked`, and
   `git diff --check` passed; the test suite contains 45 tests.
 - `cargo run --quiet -- --version` reported `fast 0.0.4`.
-- Human exact-tree review remains pending in `REVIEW-0006`.
+- `REVIEW-0006` records the accepted implementation commit
+  `0b9c725edb8f557a4d679523174b1a5954992fac` and tree
+  `96076c882aadfc4653917812ecf49138d843c110`.

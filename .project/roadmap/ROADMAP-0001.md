@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: .project/review/REVIEW-0008-file-visibility-version-0.0.5.md
+review: .project/review/REVIEW-0009-logical-path-preservation-and-version-0.0.6.md
 ---
 
 # Roadmap: fast
@@ -60,14 +60,18 @@ system by default.
   `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
   `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
 - Initial selection refinement and the `0.0.4` package candidate are implemented
-  and accepted in `REVIEW-0006`; their candidate tree and commit identifiers are
-  pending staging and commit. The work is governed by
+  and accepted in `REVIEW-0006`; their candidate commit is
+  `0b9c725edb8f557a4d679523174b1a5954992fac` with tree
+  `96076c882aadfc4653917812ecf49138d843c110`. The work is governed by
   `.project/decision/DECISION-0006-navigation-default-selection.md`.
 - On-demand file visibility and browse-only confirmation are implemented and
   accepted in `REVIEW-0007`; directory-first grouping, a Files label, dimmed
-  file rows, and the exact candidate tree and commit are recorded there. The
-  synchronized `0.0.5` package metadata and governance follow-up are pending
-  exact-tree review in `REVIEW-0008`.
+  file rows, and the exact candidate tree and commit are recorded there.
+- The synchronized `0.0.5` package metadata and governance reconciliation were
+  committed in `518b864` and accepted in `REVIEW-0008`.
+- Logical symlink path preservation and the `0.0.6` package update were
+  implemented and accepted in `a824db7` and `REVIEW-0009`; the implementation
+  tree is `cec199816f4e7c54631aaec45a156e35f57fd467`.
 
 ## Phase
 
@@ -130,7 +134,8 @@ system by default.
   manual movement priority, and synchronized version metadata pass automated
   checks.
 - Status: Completed and accepted in `REVIEW-0006`; candidate tree and commit
-  identifiers remain pending staging and commit.
+  identifiers are recorded as commit `0b9c725edb8f557a4d679523174b1a5954992fac`
+  with tree `96076c882aadfc4653917812ecf49138d843c110`.
 - Dependency: phase-3-navigation-ux-refinements
 
 ### Phase 3 Follow-up: File Visibility
@@ -141,10 +146,20 @@ system by default.
 - Gate: Runtime visibility toggling, mixed file/directory chunking, safe
   non-directory actions, directory-first grouping, Files labeling, cache
   isolation, and documentation pass automated checks.
-- Status: Runtime implementation completed and accepted in `REVIEW-0007`;
-  synchronized `0.0.5` package metadata is pending exact-tree review in
-  `REVIEW-0008`.
+- Status: Runtime implementation and synchronized `0.0.5` package metadata are
+  completed and accepted in `REVIEW-0007` and `REVIEW-0008`.
 - Dependency: phase-3-navigation-ux-default-selection
+
+### Phase 3 Follow-up: Logical Symlink Paths and 0.0.6
+
+- Objective: Preserve valid shell logical paths through startup and keep parent
+  navigation within the symlink path.
+- Gate: Valid `PWD` recovery, safe fallback behavior, symlink regression
+  coverage, and synchronized `0.0.6` package metadata pass automated checks.
+- Status: Completed and accepted in `REVIEW-0009`; implementation commit
+  `a824db7760426ebb908f4ef439ff0de0ed18ab33` has tree
+  `cec199816f4e7c54631aaec45a156e35f57fd467`.
+- Dependency: phase-3-file-visibility
 
 ### Phase 4: Bounded Child-Directory Prefetch
 
@@ -154,7 +169,7 @@ system by default.
 - Gate: Prefetch queue, concurrency, work bounds, cancellation, cache
   interaction, and the absence of recursive indexing pass automated checks.
 - Status: Deferred; `PLAN-0004` remains proposed pending demonstrated need.
-- Dependency: phase-3-internal-filter-and-shell-integration
+- Dependency: phase-3-logical-path-preservation
 
 ## Assumption
 

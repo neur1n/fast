@@ -4,7 +4,7 @@ status: approved
 type: implementation
 target: PLAN-0006
 base_commit: 5ffa1ba87f4ce4fa952326119618c8d769fce214
-candidate_tree: pending
+candidate_tree: 96076c882aadfc4653917812ecf49138d843c110
 scope:
   - First-child default selection after navigation entries
   - Cache-hit and incremental cold-scan selection behavior
@@ -22,7 +22,7 @@ date: 2026-09-03
 provenance: Human reviewer accepted the navigator default-selection implementation and the 0.0.4 version update after reviewing the recorded checks.
 verdict: approve
 transition: Complete the default-selection refinement and advance project navigation to the deferred Phase 4 prefetch plan.
-candidate_commit: pending
+candidate_commit: 0b9c725edb8f557a4d679523174b1a5954992fac
 ---
 
 # Review: Navigator Default Selection and 0.0.4
@@ -51,8 +51,7 @@ candidate_commit: pending
 
 ## Condition
 
-- blocking: the candidate tree and commit identifiers remain pending until the
-  accepted candidate is staged and committed.
+- blocking: none.
 - non-blocking: none recorded.
 
 ## Agent Assessment
@@ -65,11 +64,11 @@ candidate_commit: pending
   selection fallback.
 - The implementation candidate satisfies the automated checks and the human
   reviewer has accepted its scope and behavior.
-- The exact candidate tree and commit identifiers still need to be recorded
-  after human staging and commit.
+- The exact candidate tree and commit identifiers are recorded in the review
+  header.
 
 ## Human Decision
 
-- Approve the implementation candidate and advance project navigation to the
-  deferred Phase 4 prefetch plan. Record the candidate tree and commit
-  identifiers after staging and commit.
+- Approve commit `0b9c725edb8f557a4d679523174b1a5954992fac` and candidate tree
+  `96076c882aadfc4653917812ecf49138d843c110`, then advance project navigation
+  to the deferred Phase 4 prefetch plan.
