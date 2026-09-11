@@ -4,7 +4,7 @@ status: approved
 type: implementation
 target: DECISION-0005
 base_commit: 521e6b6
-candidate_tree: pending
+candidate_tree: 320571b98141bffc1ebb243c5a8065bd822b2b1c
 scope:
   - `--version` and `-V` CLI output
   - Compile-time release version injection with Cargo fallback
@@ -22,6 +22,7 @@ staged_paths:
   - shell/fast.zsh
   - shell/fast.nu
   - .github/workflows/manual-release.yml
+  - .project/STATE.md
   - .project/decision/DECISION-0005-version-reporting-and-release-injection.md
   - .project/review/REVIEW-0005-version-reporting-and-release-injection.md
 reviewer: human reviewer
@@ -29,7 +30,7 @@ date: 2026-09-03
 provenance: Human reviewer confirmed the 0.0.3 package version and ran the offline lockfile synchronization.
 verdict: approve
 transition: Accept version reporting and release injection; keep automatic nightly scheduling deferred.
-candidate_commit: pending
+candidate_commit: 5ffa1ba87f4ce4fa952326119618c8d769fce214
 ---
 
 # Review: Version Reporting and Release Injection
@@ -42,6 +43,9 @@ candidate_commit: pending
 - `git diff --check` passed.
 - `cargo check --offline` synchronized the root package entry in `Cargo.lock`
   from `0.1.0` to `0.0.3`.
+- The synchronized candidate is commit
+  `5ffa1ba87f4ce4fa952326119618c8d769fce214` with tree
+  `320571b98141bffc1ebb243c5a8065bd822b2b1c`.
 - `bash -n shell/fast.bash`, `zsh -n shell/fast.zsh`, and Nushell source parsing
   passed.
 - The workflow YAML parsed successfully with Ruby's YAML parser.
@@ -60,8 +64,7 @@ candidate_commit: pending
 
 ## Condition
 
-- blocking: the candidate tree and commit identifiers remain pending until the
-  synchronized lockfile and governance update are staged and committed.
+- blocking: none.
 - non-blocking: no actionlint installation was available, so workflow
   validation covered YAML parsing and the changed shell fragments only.
 
@@ -74,9 +77,11 @@ candidate_commit: pending
   a prerelease suffix.
 - The package manifest and lockfile both identify the root package as `0.0.3`,
   so the workflow's `--locked` checks are reproducible.
+- The exact candidate commit and tree are recorded in the review header.
 - No-argument shell navigation remains on the existing selection-file path.
 
 ## Human Decision
 
-- Approve the version reporting and release injection candidate. Record the
-  final candidate tree and commit identifiers after the candidate is committed.
+- Approve commit `5ffa1ba87f4ce4fa952326119618c8d769fce214` and candidate tree
+  `320571b98141bffc1ebb243c5a8065bd822b2b1c`; keep automatic nightly scheduling
+  deferred.

@@ -4,7 +4,7 @@ status: approved
 type: gate
 target: phase-3-navigation-ux-refinements
 base_commit: 5b572e683bb4535ab27c335601682a79cfdaf115
-candidate_tree: pending
+candidate_tree: 556be641f9a7d51fbce0acb4d67686593bb7dbc0
 scope:
   - Process-local path-based directory selection memory
   - Parent navigation restoration for the child just left
@@ -18,7 +18,7 @@ date: 2026-09-03
 provenance: Human reviewer accepted the staged navigator selection restoration implementation after reviewing the code and test results.
 verdict: approve
 transition: Complete phase-3-navigation-ux-refinements and keep phase-4-bounded-prefetch deferred pending demonstrated need.
-candidate_commit: pending
+candidate_commit: 94b467348b30536b049a1f24565f129ee2f37359
 ---
 
 # Review: Phase 3 Navigator UX Refinements
@@ -28,6 +28,8 @@ candidate_commit: pending
 - The candidate is based on `5b572e6`, which contains the accepted fuzzy-default
   filter implementation.
 - The staged candidate adds process-local selection memory in `src/app.rs`.
+- Commit `94b467348b30536b049a1f24565f129ee2f37359` has candidate tree
+  `556be641f9a7d51fbce0acb4d67686593bb7dbc0`.
 - Parent navigation, cache restoration, incremental scan restoration, and
   missing-entry fallback are covered by the application tests.
 - `cargo fmt --all -- --check` passed.
@@ -45,8 +47,7 @@ candidate_commit: pending
 ## Condition
 
 - blocking: none
-- non-blocking: the code candidate's commit and candidate tree identifiers are
-  pending until the staged code is committed.
+- non-blocking: none recorded.
 
 ## Agent Assessment
 
@@ -55,10 +56,13 @@ candidate_commit: pending
 - A pending path is retried as asynchronous chunks arrive and is cleared after
   a complete scan or an error, leaving only valid visible selections.
 - Phase 3 navigator UX refinements are complete under the accepted scope.
+- The exact candidate commit and tree are recorded in the review header.
 - Bounded child-directory prefetch remains deferred to `PLAN-0004`.
 
 ## Human Decision
 
-- Approve the staged candidate for `phase-3-navigation-ux-refinements`.
+- Approve commit `94b467348b30536b049a1f24565f129ee2f37359` and candidate tree
+  `556be641f9a7d51fbce0acb4d67686593bb7dbc0` for
+  `phase-3-navigation-ux-refinements`.
 - Complete `PLAN-0005` and advance project navigation to the deferred Phase 4
   prefetch plan.

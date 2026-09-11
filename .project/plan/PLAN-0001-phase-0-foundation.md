@@ -1,6 +1,6 @@
 ---
 id: PLAN-0001
-status: implemented
+status: completed
 roadmap: ROADMAP-0001
 phase: phase-0-foundation
 issue: []

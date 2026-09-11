@@ -96,14 +96,7 @@ protocol unchanged.
 
 ## Completion Evidence
 
-- Implemented fuzzy-default filtering and process-local path-based selection
-  restoration in `src/app.rs`.
-- Navigation now restores the child just left, cache hits and asynchronous scan
-  chunks restore remembered entries, and missing entries fall back safely.
-- `cargo fmt --all -- --check`,
-  `cargo clippy --all-targets --all-features -- -D warnings`, and
-  `cargo test --locked` passed; the test suite contains 38 tests.
-- `git diff --cached --check` passed for the accepted code candidate.
-- The human reviewer accepted the code candidate. Its commit and candidate tree
-  identifiers remain pending until the staged code is committed.
-- Bounded child-directory prefetch remains deferred to `PLAN-0004`.
+- Navigator UX refinements were implemented and accepted in
+  `.project/review/REVIEW-0004-phase-3-navigation-ux.md`.
+- Bounded child-directory prefetch remains deferred under
+  `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`.

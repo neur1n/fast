@@ -27,51 +27,14 @@ system by default.
 
 ## Current Progress
 
-- Phase 0 foundation is committed in `e754b31`; its formal exact-tree review
-  is not recorded.
-- Phase 1 navigation and cancellable chunked scanning are implemented in
-  `07fdac4`.
-- Bash, Zsh, and Nushell shell wrappers were delivered with the Phase 1
-  implementation.
-- Phase 2 persistent caching was committed in `882c4ac` with candidate tree
-  `bd4b10ed717f89585ba24b54daef9f50afab51b5`; its gate was accepted in
-  `REVIEW-0001`.
-- The manual release workflow and platform packaging steps are present and
-  were exercised in practice as part of the Phase 3 verification.
-- Built-in simple filtering was implemented in `0ed7208`, and the in-process
-  fuzzy matcher was implemented in `df00d64`. The binary source was reorganized
-  into dedicated application, CLI, and terminal modules in `a27a411`, with the
-  entrypoint reduced to top-level orchestration; that approved refactor is
-  recorded in `REVIEW-0002`.
-- Explicit `..` parent and `.` current-directory navigation were implemented in
-  `3578296`; the test suite passes 34 tests and navigation entries remain out of
-  cached child-directory data. The Phase 3 implementation and practical
-  wrapper/release verification are accepted in `REVIEW-0003`.
-- Navigator UX refinements are implemented and accepted in the code candidate
-  recorded by `REVIEW-0004`; the plan is
-  `.project/plan/PLAN-0005-phase-3-navigation-ux-refinements.md`, and the
-  behavior is recorded in
-  `.project/decision/DECISION-0004-navigation-defaults-and-session-selection.md`.
-- Bounded child-directory prefetch remains deferred. It is retained as the
-  proposed `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md` and will be
-  revisited if measured workloads demonstrate a need beyond the current
-  chunked scan behavior. The Phase 3 plan and accepted fuzzy-matching decision
-  are recorded in
-  `.project/plan/PLAN-0003-phase-3-prefetch-and-filter-backends.md` and
-  `.project/decision/DECISION-0003-in-process-fuzzy-matching.md`.
-- Initial selection refinement and the `0.0.4` package candidate are implemented
-  and accepted in `REVIEW-0006`; their candidate commit is
-  `0b9c725edb8f557a4d679523174b1a5954992fac` with tree
-  `96076c882aadfc4653917812ecf49138d843c110`. The work is governed by
-  `.project/decision/DECISION-0006-navigation-default-selection.md`.
-- On-demand file visibility and browse-only confirmation are implemented and
-  accepted in `REVIEW-0007`; directory-first grouping, a Files label, dimmed
-  file rows, and the exact candidate tree and commit are recorded there.
-- The synchronized `0.0.5` package metadata and governance reconciliation were
-  committed in `518b864` and accepted in `REVIEW-0008`.
-- Logical symlink path preservation and the `0.0.6` package update were
-  implemented and accepted in `a824db7` and `REVIEW-0009`; the implementation
-  tree is `cec199816f4e7c54631aaec45a156e35f57fd467`.
+- The foundation and Phase 1 implementation are committed, but formal
+  exact-tree review records for those early transitions are not recorded.
+- Phase 2, Phase 3, and the accepted follow-up work through `0.0.6` are complete;
+  canonical implementation evidence remains in the linked plans, decisions,
+  and reviews.
+- Phase 4 bounded child-directory prefetch is deferred and remains proposed in
+  `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`; promotion requires
+  measured workload evidence.
 
 ## Phase
 
@@ -121,8 +84,9 @@ system by default.
 - Gate: Default filter behavior, substring fallback, parent selection
   restoration, asynchronous scan restoration, and safe missing-entry fallback
   pass automated checks.
-- Status: Completed and accepted in `REVIEW-0004`; the code commit and
-  candidate tree identifiers are pending recording.
+- Status: Completed and accepted in `REVIEW-0004`; commit
+  `94b467348b30536b049a1f24565f129ee2f37359` has candidate tree
+  `556be641f9a7d51fbce0acb4d67686593bb7dbc0`.
 - Dependency: phase-3-internal-filter-and-shell-integration
 
 ### Phase 3 Follow-up: Default Selection Refinement and 0.0.4
