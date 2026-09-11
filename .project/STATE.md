@@ -2,7 +2,7 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; governance reconciliation candidate prepared, Phase 4 prefetch deferred
+- Status: active; REVIEW-0010 approved, final governance update prepared, Phase 4 prefetch deferred
 - Last reconciled: 2026-09-11
 - Roadmap: .project/roadmap/ROADMAP-0001.md
 - Current phase: phase-4-bounded-prefetch
@@ -17,14 +17,15 @@ logical symlink path fix and package `0.0.6` remain unchanged.
 
 ## Last Completed
 
+- The governance reconciliation candidate was committed and accepted in
+  `REVIEW-0010`.
 - Logical symlink path preservation and `0.0.6` were accepted in `REVIEW-0009`.
 - File visibility and the `0.0.5` metadata reconciliation were accepted in
   `REVIEW-0008`.
-- Default selection refinement and `0.0.4` were accepted in `REVIEW-0006`.
 
 ## Next Action
 
-- Complete human exact-tree review and commit of the governance reconciliation candidate.
+- Commit the finalized `REVIEW-0010` and `STATE.md` reconciliation candidate.
 
 ## Blockers
 
@@ -32,8 +33,7 @@ logical symlink path fix and package `0.0.6` remain unchanged.
 
 ## Pending Human Actions
 
-- Stage the complete candidate, run `git write-tree`, record its tree and
-  disposition in `REVIEW-0010`, and commit it after approval.
+- Stage the finalized review and state records, then commit them after approval.
 
 ## Relevant Authorities
 
