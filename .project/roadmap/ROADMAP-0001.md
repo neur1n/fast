@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: .project/review/REVIEW-0009-logical-path-preservation-and-version-0.0.6.md
+review: .project/review/REVIEW-0011-current-directory-default-selection-and-version-0.0.7.md
 ---
 
 # Roadmap: fast
@@ -29,7 +29,7 @@ system by default.
 
 - The foundation and Phase 1 implementation are committed, but formal
   exact-tree review records for those early transitions are not recorded.
-- Phase 2, Phase 3, and the accepted follow-up work through `0.0.6` are complete;
+- Phase 2, Phase 3, and the accepted follow-up work through `0.0.7` are complete;
   canonical implementation evidence remains in the linked plans, decisions,
   and reviews.
 - Phase 4 bounded child-directory prefetch is deferred and remains proposed in
@@ -125,6 +125,18 @@ system by default.
   `cec199816f4e7c54631aaec45a156e35f57fd467`.
 - Dependency: phase-3-file-visibility
 
+### Phase 3 Follow-up: Current-Directory Default Selection and 0.0.7
+
+- Objective: Select the current-directory entry by default while preserving
+  asynchronous remembered-path restoration and explicit movement priority.
+- Gate: Current-directory defaults, late remembered-path restoration, missing
+  path fallback, regression coverage, documentation, and synchronized version
+  metadata pass automated checks.
+- Status: Completed and accepted in `REVIEW-0011`; implementation commit
+  `b6966577fba7ece307c1573fb2465debd537aea5` has tree
+  `f38667916eb8f559ee220b0a9fc5b6f537f0e8ee`.
+- Dependency: phase-3-logical-path-preservation
+
 ### Phase 4: Bounded Child-Directory Prefetch
 
 - Objective: Add bounded, cancellable prefetch for direct child-directory
@@ -133,7 +145,7 @@ system by default.
 - Gate: Prefetch queue, concurrency, work bounds, cancellation, cache
   interaction, and the absence of recursive indexing pass automated checks.
 - Status: Deferred; `PLAN-0004` remains proposed pending demonstrated need.
-- Dependency: phase-3-logical-path-preservation
+- Dependency: phase-3-current-directory-default-selection
 
 ## Assumption
 
