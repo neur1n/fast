@@ -53,8 +53,8 @@
         Start in the current directory, browse its child directories, return to
         the parent, rescan, and select a directory without leaving the
         keyboard. A directory without a remembered selection highlights its
-        first child after the `..` and `.` navigation entries; remembered
-        selections are restored when available.
+        `.` current-directory entry; remembered selections are restored when
+        available and fall back to `.` if the entry is gone.
       </p>
     </details>
   </li>
@@ -164,8 +164,9 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 
 - **Cache directory:** Set `FAST_CACHE_DIR` to override the platform cache
   directory.
-- **Default selection:** A new directory selects its first child after the
-  `..` and `.` navigation entries. Empty directories fall back to `.`.
+- **Default selection:** A directory without a remembered selection selects
+  its `.` current-directory entry. A remembered selection is restored when
+  available and falls back to `.` if the entry is gone.
 - **Parent:** Press `Backspace`/`Left` or `h` to go to the parent directory
   (`..`).
 - **Current:** The `.` entry represents the current directory. Select it with
