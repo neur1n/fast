@@ -35,6 +35,10 @@ system by default.
 - Phase 4 bounded child-directory prefetch is deferred and remains proposed in
   `.project/plan/PLAN-0004-phase-4-bounded-prefetch.md`; promotion requires
   measured workload evidence.
+- Entry modification timestamps are approved in
+  `.project/plan/PLAN-0009-entry-modification-timestamps.md` and
+  `DECISION-0010` as an independent follow-up; implementation is pending and
+  does not depend on the deferred Phase 4 prefetch.
 
 ## Phase
 
@@ -147,6 +151,17 @@ system by default.
 - Status: Deferred; `PLAN-0004` remains proposed pending demonstrated need.
 - Dependency: phase-3-current-directory-default-selection
 
+### Phase 5: Entry Modification Timestamps
+
+- Objective: Display direct-entry modification timestamps in both listing modes
+  while preserving responsive shallow scanning and listing-cache behavior.
+- Gate: Fresh scan metadata, cache-hit metadata refresh, cancellation and stale
+  result isolation, width-aware rendering, error fallbacks, documentation, and
+  synchronized `0.0.8` metadata pass automated checks.
+- Status: Approved in `PLAN-0009` and `DECISION-0010`; implementation is
+  pending and this workstream is independent of deferred Phase 4 prefetch.
+- Dependency: phase-3-current-directory-default-selection
+
 ## Assumption
 
 - Rust is the proposed initial implementation language.
@@ -161,3 +176,6 @@ system by default.
   users do not need a system SQLite installation or the `sqlite3` CLI.
 - No fixed latency or binary-size target has been approved yet; both will be
   measured before optimization decisions are finalized.
+- Last-modified values use local time, describe each direct entry itself rather
+  than recursive contents, and are refreshed per listing load rather than per
+  redraw.
