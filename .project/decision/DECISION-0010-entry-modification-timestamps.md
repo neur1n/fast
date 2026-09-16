@@ -3,7 +3,7 @@ id: DECISION-0010
 status: accepted
 date: 2026-09-15
 supersedes: none
-review: none
+review: .project/review/REVIEW-0012-entry-modification-timestamps.md
 ---
 
 # Decision: Entry Modification Timestamps
@@ -50,12 +50,16 @@ listing-only cache format remains readable and does not claim freshness it canno
 guarantee. The cache continues to validate directory membership with its
 existing fingerprint, while entry metadata is refreshed separately.
 
-Render each row as the marker, the original name truncated only for the current
-terminal width, four ASCII spaces, and the timestamp field. Do not pin the
-timestamp to the terminal's right edge. Append ASCII `...` only to a name that
-is truncated; recompute the rendering from the full name and current terminal
-size on every draw. Use `White` for directory names and timestamps and
-`DarkGrey` for file names and timestamps.
+Render each row as the marker, a bounded name column, four ASCII spaces, and the
+timestamp field. The complete entry line has an 80-display-cell upper bound. The
+name column is based on the maximum display width of the currently visible names
+and the space available after the marker, gap, and timestamp, then constrained
+by the terminal width. This gives a maximum name column of 58 display cells when
+the complete line limit applies. The layout is not pinned to the terminal's
+right edge. Append ASCII `...` only to a name that is truncated; recompute the
+layout from the full names when the listing, filter, or terminal size changes.
+Use `White` for directory names and timestamps and `DarkGrey` for file names and
+timestamps.
 
 ## Rationale
 
@@ -63,9 +67,10 @@ Option 3 separates directory-listing freshness from child-metadata freshness
 without discarding the existing cache optimization. Chunked background work
 matches the current scan model and allows navigation, rescan, and exit to cancel
 obsolete work. ASCII placeholders and spacing avoid font and terminal-width
-ambiguity. A direct separator instead of terminal-edge alignment keeps short
-names and timestamps visually associated and avoids layout jitter as scan chunks
-arrive.
+ambiguity. A bounded name column gives the timestamp a stable vertical position
+without the large empty region caused by terminal-edge alignment. The maximum is
+maintained incrementally for unfiltered scan chunks, so layout calculation does
+not scan the complete listing on every redraw.
 
 ## Consequence
 

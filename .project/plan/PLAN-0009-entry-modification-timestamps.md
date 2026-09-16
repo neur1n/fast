@@ -1,10 +1,10 @@
 ---
 id: PLAN-0009
-status: approved
+status: completed
 roadmap: ROADMAP-0001
 phase: phase-5-entry-modification-timestamps
 issue: []
-review: none
+review: .project/review/REVIEW-0012-entry-modification-timestamps.md
 ---
 
 # Plan: Entry Modification Timestamps
@@ -32,8 +32,9 @@ directory. Release the feature as package version `0.0.8`.
   `DarkGrey`.
 - Included: rendering `...` while a timestamp refresh is pending and `-` when
   metadata is unavailable.
-- Included: four ASCII spaces between the rendered name and timestamp, without
-  anchoring the timestamp to the terminal's right edge.
+- Included: an 80-display-cell upper bound for the complete entry line, with a
+  derived display-width-aware name column followed by four ASCII spaces and the
+  timestamp, without anchoring the timestamp to the terminal's right edge.
 - Included: render-time name truncation with an ASCII `...` suffix, terminal
   display-width-aware measurement, and recalculation after terminal resizing.
 - Included: preserving navigation, filtering, selection, file grouping, cache
@@ -62,10 +63,12 @@ directory. Release the feature as package version `0.0.8`.
   work, and results from an obsolete context cannot change the active view.
 - A metadata failure leaves the entry visible and renders `-`; a pending
   refresh renders `...`.
-- Names and timestamps remain separated by four ASCII spaces. The timestamp
-  remains visible whenever the terminal can accommodate the timestamp and a
-  usable name; otherwise the timestamp column is hidden before the name becomes
-  unusable.
+- Names and timestamps remain separated by four ASCII spaces and timestamps
+  share one vertical column for the current visible listing. The complete entry
+  line is capped at 80 display cells before terminal-width constraints are
+  applied. The timestamp remains visible whenever the terminal can accommodate
+  the timestamp and a usable name; otherwise the timestamp column is hidden
+  before the name becomes unusable.
 - A name that exceeds the current render width is truncated only for display
   and receives an ASCII `...` suffix. Enlarging the terminal reveals more of
   the original name, and shrinking it never compounds a previous truncation.
@@ -91,10 +94,12 @@ directory. Release the feature as package version `0.0.8`.
 4. Integrate cache-hit refresh with application lifecycle events, including
    navigation, file-mode replacement, rescan, exit, selection restoration,
    filtering, and status text.
-5. Replace the single-column renderer with width-aware name and timestamp
-   rendering. Reserve the full timestamp width, use four ASCII spaces, append
-   `...` only when the original name is truncated, and recompute layout from
-   the current terminal size on every draw.
+5. Replace the single-column renderer with an 80-display-cell bounded,
+   width-aware name and timestamp layout. Maintain the visible-name maximum
+   incrementally for unfiltered scan chunks, recompute it for filter changes,
+   derive the name column after reserving the marker, timestamp, and four ASCII
+   spaces, append `...` only when the original name is truncated, and recompute
+   terminal constraints on resize.
 6. Preserve the existing listing-only cache encoding and add tests for scan
    metadata, cache-hit refresh, metadata errors, cancellation, stale events,
    cache compatibility, colors, spacing, long names, Unicode display widths,
@@ -162,4 +167,10 @@ directory. Release the feature as package version `0.0.8`.
 
 ## Completion Evidence
 
-- Implementation and implementation review pending.
+- Commit `715028818636c6bd26e3fd1a3cb7680e7cc83492` implements direct-entry
+  timestamps, asynchronous cache-hit metadata refresh, and width-aware aligned
+  rendering at package version `0.0.8`.
+- The implementation preserves the listing-only cache format and passes the
+  recorded formatting, lint, test, check, version, and diff validations.
+- Human binary testing and the accepted implementation disposition are recorded
+  in `REVIEW-0012`.

@@ -3,7 +3,7 @@ id: ROADMAP-0001
 status: active
 project: fast
 supersedes: none
-review: .project/review/REVIEW-0011-current-directory-default-selection-and-version-0.0.7.md
+review: .project/review/REVIEW-0012-entry-modification-timestamps.md
 ---
 
 # Roadmap: fast
@@ -37,8 +37,9 @@ system by default.
   measured workload evidence.
 - Entry modification timestamps are approved in
   `.project/plan/PLAN-0009-entry-modification-timestamps.md` and
-  `DECISION-0010` as an independent follow-up; implementation is pending and
-  does not depend on the deferred Phase 4 prefetch.
+  `DECISION-0010` and were implemented in commit
+  `715028818636c6bd26e3fd1a3cb7680e7cc83492`; the implementation is accepted in
+  `REVIEW-0012` and does not depend on the deferred Phase 4 prefetch.
 
 ## Phase
 
@@ -158,8 +159,10 @@ system by default.
 - Gate: Fresh scan metadata, cache-hit metadata refresh, cancellation and stale
   result isolation, width-aware rendering, error fallbacks, documentation, and
   synchronized `0.0.8` metadata pass automated checks.
-- Status: Approved in `PLAN-0009` and `DECISION-0010`; implementation is
-  pending and this workstream is independent of deferred Phase 4 prefetch.
+- Status: Completed and accepted in `REVIEW-0012`; implementation commit
+  `715028818636c6bd26e3fd1a3cb7680e7cc83492` has candidate tree
+  `e03e97dfd18e5a2f74df5f8c2e6c7476729181e1`. This workstream was independent
+  of deferred Phase 4 prefetch.
 - Dependency: phase-3-current-directory-default-selection
 
 ## Assumption
