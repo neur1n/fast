@@ -7,7 +7,7 @@ use std::{
     mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
   },
   thread::{self, JoinHandle},
-  time::Duration,
+  time::{Duration, SystemTime},
 };
 
 pub const CHUNK_SIZE: usize = 64;
@@ -24,8 +24,15 @@ pub struct DirectoryEntry {
 #[derive(Debug)]
 pub enum ScanEvent {
   Chunk(Vec<DirectoryEntry>),
+  MetadataChunk(Vec<EntryMetadata>),
   Finished,
   Error(String),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EntryMetadata {
+  pub path: PathBuf,
+  pub modified: Option<SystemTime>,
 }
 
 pub struct ScanHandle {
@@ -42,6 +49,21 @@ impl ScanHandle {
     let worker = thread::Builder::new()
       .name("fast-directory-scan".to_owned())
       .spawn(move || scan_directory(path, sender, worker_cancel, include_files))?;
+
+    Ok(Self {
+      receiver,
+      cancel,
+      worker: Some(worker),
+    })
+  }
+
+  pub fn start_metadata(paths: Vec<PathBuf>) -> io::Result<Self> {
+    let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = Arc::clone(&cancel);
+    let worker = thread::Builder::new()
+      .name("fast-entry-metadata".to_owned())
+      .spawn(move || refresh_metadata(paths, sender, worker_cancel))?;
 
     Ok(Self {
       receiver,
@@ -85,6 +107,7 @@ fn scan_directory(
   };
 
   let mut chunk = Vec::with_capacity(CHUNK_SIZE);
+  let mut metadata_chunk = Vec::with_capacity(CHUNK_SIZE);
   for result in directory {
     if is_cancelled(&cancel) {
       return;
@@ -106,21 +129,62 @@ fn scan_directory(
 
     chunk.push(DirectoryEntry {
       name: entry.file_name().to_string_lossy().into_owned(),
-      path,
+      path: path.clone(),
       is_directory,
+    });
+    metadata_chunk.push(EntryMetadata {
+      modified: modified_time(&path),
+      path,
     });
     if chunk.len() == CHUNK_SIZE {
       if !send_event(&sender, ScanEvent::Chunk(chunk), &cancel) {
+        return;
+      }
+      if !send_event(&sender, ScanEvent::MetadataChunk(metadata_chunk), &cancel) {
+        return;
+      }
+      chunk = Vec::with_capacity(CHUNK_SIZE);
+      metadata_chunk = Vec::with_capacity(CHUNK_SIZE);
+    }
+  }
+
+  if !chunk.is_empty() {
+    if !send_event(&sender, ScanEvent::Chunk(chunk), &cancel) {
+      return;
+    }
+    if !send_event(&sender, ScanEvent::MetadataChunk(metadata_chunk), &cancel) {
+      return;
+    }
+  }
+  let _ = send_event(&sender, ScanEvent::Finished, &cancel);
+}
+
+fn refresh_metadata(paths: Vec<PathBuf>, sender: SyncSender<ScanEvent>, cancel: Arc<AtomicBool>) {
+  let mut chunk = Vec::with_capacity(CHUNK_SIZE);
+  for path in paths {
+    if is_cancelled(&cancel) {
+      return;
+    }
+    chunk.push(EntryMetadata {
+      modified: modified_time(&path),
+      path,
+    });
+    if chunk.len() == CHUNK_SIZE {
+      if !send_event(&sender, ScanEvent::MetadataChunk(chunk), &cancel) {
         return;
       }
       chunk = Vec::with_capacity(CHUNK_SIZE);
     }
   }
 
-  if !chunk.is_empty() && !send_event(&sender, ScanEvent::Chunk(chunk), &cancel) {
+  if !chunk.is_empty() && !send_event(&sender, ScanEvent::MetadataChunk(chunk), &cancel) {
     return;
   }
   let _ = send_event(&sender, ScanEvent::Finished, &cancel);
+}
+
+pub(crate) fn modified_time(path: &std::path::Path) -> Option<SystemTime> {
+  fs::symlink_metadata(path).ok()?.modified().ok()
 }
 
 fn is_cancelled(cancel: &AtomicBool) -> bool {
@@ -187,7 +251,7 @@ mod tests {
     fs::create_dir(root.0.join("a-directory")).expect("directory should be created");
     File::create(root.0.join("file.txt")).expect("file should be created");
 
-    let (sender, receiver) = mpsc::sync_channel(2);
+    let (sender, receiver) = mpsc::sync_channel(4);
     let cancel = Arc::new(AtomicBool::new(false));
     scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
 
@@ -196,6 +260,7 @@ mod tests {
     while let Ok(event) = receiver.try_recv() {
       match event {
         ScanEvent::Chunk(chunk) => entries.extend(chunk),
+        ScanEvent::MetadataChunk(_) => {}
         ScanEvent::Finished => finished = true,
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
@@ -239,7 +304,7 @@ mod tests {
         .expect("directory should be created");
     }
 
-    let (sender, receiver) = mpsc::sync_channel(4);
+    let (sender, receiver) = mpsc::sync_channel(8);
     let cancel = Arc::new(AtomicBool::new(false));
     scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
 
@@ -252,6 +317,7 @@ mod tests {
           chunk_count += 1;
           entry_count += entries.len();
         }
+        ScanEvent::MetadataChunk(_) => {}
         ScanEvent::Finished => finished = true,
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
@@ -265,7 +331,7 @@ mod tests {
   #[test]
   fn cancellation_prevents_events() {
     let root = TemporaryDirectory::new();
-    let (sender, receiver) = mpsc::sync_channel(2);
+    let (sender, receiver) = mpsc::sync_channel(4);
     let cancel = Arc::new(AtomicBool::new(true));
     scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
 
@@ -278,14 +344,16 @@ mod tests {
     fs::create_dir(root.0.join("directory")).expect("directory should be created");
     File::create(root.0.join("file.txt")).expect("file should be created");
 
-    let (sender, receiver) = mpsc::sync_channel(2);
+    let (sender, receiver) = mpsc::sync_channel(4);
     let cancel = Arc::new(AtomicBool::new(false));
     scan_directory(root.0.clone(), sender, Arc::clone(&cancel), true);
 
     let mut entries = Vec::new();
+    let mut metadata = Vec::new();
     while let Ok(event) = receiver.try_recv() {
       match event {
         ScanEvent::Chunk(chunk) => entries.extend(chunk),
+        ScanEvent::MetadataChunk(updates) => metadata.extend(updates),
         ScanEvent::Finished => {}
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
@@ -297,6 +365,74 @@ mod tests {
     assert!(entries[0].is_directory);
     assert_eq!(entries[1].name, "file.txt");
     assert!(!entries[1].is_directory);
+    assert_eq!(metadata.len(), 2);
+    assert!(metadata.iter().all(|entry| entry.modified.is_some()));
+  }
+
+  #[test]
+  fn metadata_refresh_reports_unavailable_entries_without_failing() {
+    let missing = env::temp_dir().join(format!(
+      "fast-metadata-missing-{}-{}",
+      std::process::id(),
+      SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after the Unix epoch")
+        .as_nanos()
+    ));
+    let (sender, receiver) = mpsc::sync_channel(2);
+    let cancel = Arc::new(AtomicBool::new(false));
+    refresh_metadata(vec![missing.clone()], sender, Arc::clone(&cancel));
+
+    match receiver.try_recv().expect("metadata update should be sent") {
+      ScanEvent::MetadataChunk(updates) => {
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].path, missing);
+        assert!(updates[0].modified.is_none());
+      }
+      event => panic!("unexpected event: {event:?}"),
+    }
+    assert!(matches!(receiver.try_recv(), Ok(ScanEvent::Finished)));
+  }
+
+  #[test]
+  fn metadata_refresh_is_chunked() {
+    let paths = (0..(CHUNK_SIZE + 1))
+      .map(|index| PathBuf::from(format!("/tmp/fast-metadata-{index}")))
+      .collect::<Vec<_>>();
+    let (sender, receiver) = mpsc::sync_channel(8);
+    let cancel = Arc::new(AtomicBool::new(false));
+    refresh_metadata(paths, sender, Arc::clone(&cancel));
+
+    let mut chunk_count = 0;
+    let mut entry_count = 0;
+    let mut finished = false;
+    while let Ok(event) = receiver.try_recv() {
+      match event {
+        ScanEvent::MetadataChunk(entries) => {
+          chunk_count += 1;
+          entry_count += entries.len();
+        }
+        ScanEvent::Finished => finished = true,
+        event => panic!("unexpected event: {event:?}"),
+      }
+    }
+
+    assert_eq!(chunk_count, 2);
+    assert_eq!(entry_count, CHUNK_SIZE + 1);
+    assert!(finished);
+  }
+
+  #[test]
+  fn metadata_cancellation_prevents_events() {
+    let (sender, receiver) = mpsc::sync_channel(2);
+    let cancel = Arc::new(AtomicBool::new(true));
+    refresh_metadata(
+      vec![PathBuf::from("/tmp/fast-metadata-cancelled")],
+      sender,
+      Arc::clone(&cancel),
+    );
+
+    assert!(receiver.try_recv().is_err());
   }
 
   #[test]
@@ -306,7 +442,7 @@ mod tests {
       File::create(root.0.join(format!("file-{index:03}.txt"))).expect("file should be created");
     }
 
-    let (sender, receiver) = mpsc::sync_channel(4);
+    let (sender, receiver) = mpsc::sync_channel(8);
     let cancel = Arc::new(AtomicBool::new(false));
     scan_directory(root.0.clone(), sender, Arc::clone(&cancel), true);
 
@@ -320,6 +456,7 @@ mod tests {
           entry_count += entries.len();
           assert!(entries.iter().all(|entry| !entry.is_directory));
         }
+        ScanEvent::MetadataChunk(_) => {}
         ScanEvent::Finished => finished = true,
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }

@@ -2,8 +2,10 @@ use std::{
   collections::HashMap,
   io::{self, Stdout, Write},
   path::{Path, PathBuf},
-  time::Duration,
+  time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use time::{OffsetDateTime, UtcOffset};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crossterm::{
   cursor::MoveTo,
@@ -16,10 +18,17 @@ use crossterm::{
 use crate::{
   cache::{DirectoryCache, DirectoryFingerprint},
   filter::{FilterKind, fuzzy_indices, matching_indices},
-  scan::{DirectoryEntry, ScanEvent, ScanHandle},
+  scan::{DirectoryEntry, EntryMetadata, ScanEvent, ScanHandle, modified_time},
 };
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const MARKER_WIDTH: usize = 2;
+const TIMESTAMP_WIDTH: usize = 16;
+const TIMESTAMP_GAP: usize = 4;
+const MIN_NAME_WIDTH: usize = 4;
+const MAX_ENTRY_LINE_WIDTH: usize = 80;
+const TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
+  time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
 
 pub(crate) struct App {
   current_dir: PathBuf,
@@ -33,14 +42,30 @@ pub(crate) struct App {
   cache: Option<DirectoryCache>,
   scan: Option<ScanHandle>,
   scan_fingerprint: Option<DirectoryFingerprint>,
+  timestamps: HashMap<PathBuf, TimestampState>,
+  max_visible_name_width: usize,
   selection: SelectionState,
   status: ScanStatus,
 }
 
 enum ScanStatus {
   Indexing,
+  Refreshing,
   Ready,
   Error(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TimestampState {
+  Pending,
+  Available(SystemTime),
+  Unavailable,
+}
+
+impl TimestampState {
+  fn from_modified(modified: Option<SystemTime>) -> Self {
+    modified.map_or(Self::Unavailable, Self::Available)
+  }
 }
 
 #[derive(Default)]
@@ -77,6 +102,8 @@ impl App {
       cache,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Indexing,
     };
@@ -244,21 +271,15 @@ impl App {
     }
     if disconnected && self.scan.is_some() {
       self.scan = None;
+      self.mark_pending_timestamps_unavailable();
       self.status = ScanStatus::Error("directory scanner stopped unexpectedly".to_owned());
     }
   }
 
   fn apply_scan_event(&mut self, event: ScanEvent) {
     match event {
-      ScanEvent::Chunk(entries) => {
-        let selected_path = self.selected_path();
-        self.entries.extend(entries);
-        self.sort_entries();
-        self.refresh_visible();
-        if !self.try_restore_pending_selection() {
-          self.restore_selection(selected_path.as_deref());
-        }
-      }
+      ScanEvent::Chunk(entries) => self.apply_entries(entries),
+      ScanEvent::MetadataChunk(updates) => self.apply_metadata(updates),
       ScanEvent::Finished => {
         self.finish_pending_selection();
         self.persist_scan();
@@ -268,9 +289,58 @@ impl App {
       }
       ScanEvent::Error(error) => {
         self.selection.pending = None;
+        self.mark_pending_timestamps_unavailable();
         self.status = ScanStatus::Error(error);
         self.scan = None;
         self.scan_fingerprint = None;
+      }
+    }
+  }
+
+  fn apply_entries(&mut self, entries: Vec<DirectoryEntry>) {
+    let selected_path = self.selected_path();
+    let appended_max_name_width = if self.filter_query.is_empty() {
+      entries
+        .iter()
+        .map(|entry| UnicodeWidthStr::width(entry.name.as_str()))
+        .max()
+        .unwrap_or(0)
+    } else {
+      0
+    };
+    for entry in &entries {
+      self
+        .timestamps
+        .insert(entry.path.clone(), TimestampState::Pending);
+    }
+    self.entries.extend(entries);
+    self.sort_entries();
+    if self.filter_query.is_empty() {
+      self.visible_indices = (0..self.entries.len()).collect();
+      self.max_visible_name_width = self.max_visible_name_width.max(appended_max_name_width);
+      self.selected = self
+        .selected
+        .min(self.visible_indices.len().saturating_sub(1));
+    } else {
+      self.refresh_visible();
+    }
+    if !self.try_restore_pending_selection() {
+      self.restore_selection(selected_path.as_deref());
+    }
+  }
+
+  fn apply_metadata(&mut self, updates: Vec<EntryMetadata>) {
+    for update in updates {
+      self
+        .timestamps
+        .insert(update.path, TimestampState::from_modified(update.modified));
+    }
+  }
+
+  fn mark_pending_timestamps_unavailable(&mut self) {
+    for state in self.timestamps.values_mut() {
+      if matches!(state, TimestampState::Pending) {
+        *state = TimestampState::Unavailable;
       }
     }
   }
@@ -284,6 +354,17 @@ impl App {
       .cloned()
       .map(PendingSelection::Remembered);
     self.entries = navigation_entries(&self.current_dir);
+    self.max_visible_name_width = 0;
+    self.timestamps = self
+      .entries
+      .iter()
+      .map(|entry| {
+        (
+          entry.path.clone(),
+          TimestampState::from_modified(modified_time(&entry.path)),
+        )
+      })
+      .collect();
     self.visible_indices.clear();
     self.selected = 0;
     self.filter_query.clear();
@@ -303,7 +384,7 @@ impl App {
       self.sort_entries();
       self.refresh_visible();
       self.finish_pending_selection();
-      self.status = ScanStatus::Ready;
+      self.start_metadata_refresh();
       return;
     }
 
@@ -326,6 +407,27 @@ impl App {
     self.scan_fingerprint = None;
     if let Some(scan) = self.scan.take() {
       scan.cancel();
+    }
+  }
+
+  fn start_metadata_refresh(&mut self) {
+    let paths = self
+      .entries
+      .iter()
+      .map(|entry| entry.path.clone())
+      .collect::<Vec<_>>();
+    self.timestamps = paths
+      .iter()
+      .cloned()
+      .map(|path| (path, TimestampState::Pending))
+      .collect();
+    self.status = ScanStatus::Refreshing;
+    match ScanHandle::start_metadata(paths) {
+      Ok(scan) => self.scan = Some(scan),
+      Err(error) => {
+        self.mark_pending_timestamps_unavailable();
+        self.status = ScanStatus::Error(format!("unable to start metadata refresh: {error}"));
+      }
     }
   }
 
@@ -442,6 +544,13 @@ impl App {
       FilterKind::Substring => matching_indices(&self.entries, &self.filter_query),
       FilterKind::Fuzzy => fuzzy_indices(&self.entries, &self.filter_query),
     };
+    self.max_visible_name_width = self
+      .visible_indices
+      .iter()
+      .filter_map(|&index| self.entries.get(index))
+      .map(|entry| UnicodeWidthStr::width(entry.name.as_str()))
+      .max()
+      .unwrap_or(0);
     self.selected = self
       .selected
       .min(self.visible_indices.len().saturating_sub(1));
@@ -574,6 +683,7 @@ impl App {
 
     let list_height = height.saturating_sub(3) as usize;
     let files_position = self.files_position();
+    let name_column_width = self.name_column_width(width);
     let selected_row = self.selected_row(files_position);
     let scroll_start = self.scroll_start(list_height, selected_row);
     for row in 0..list_height {
@@ -601,10 +711,12 @@ impl App {
         continue;
       };
       let marker = if index == self.selected { "> " } else { "  " };
+      let timestamp = self.timestamp_text(entry);
+      let text = format_entry_line(marker, &entry.name, &timestamp, width, name_column_width);
       put_line(
         output,
         row as u16 + 2,
-        &format!("{marker}{}", entry.name),
+        &text,
         width,
         Self::entry_color(entry),
         index == self.selected,
@@ -627,6 +739,13 @@ impl App {
       ScanStatus::Indexing => {
         format!(
           " Indexing... {} {} discovered",
+          self.discovered_count(),
+          self.entry_label()
+        )
+      }
+      ScanStatus::Refreshing => {
+        format!(
+          " Refreshing timestamps... {} {}",
           self.discovered_count(),
           self.entry_label()
         )
@@ -713,6 +832,35 @@ impl App {
     }
     selected_row.saturating_sub(list_height.saturating_sub(1))
   }
+
+  fn name_column_width(&self, width: usize) -> Option<usize> {
+    let available = width
+      .min(MAX_ENTRY_LINE_WIDTH)
+      .saturating_sub(MARKER_WIDTH + TIMESTAMP_GAP + TIMESTAMP_WIDTH);
+    (available >= MIN_NAME_WIDTH).then_some(
+      self
+        .max_visible_name_width
+        .max(MIN_NAME_WIDTH)
+        .min(available),
+    )
+  }
+
+  fn timestamp_text(&self, entry: &DirectoryEntry) -> String {
+    match self
+      .timestamps
+      .get(&entry.path)
+      .cloned()
+      .unwrap_or(match &self.status {
+        ScanStatus::Indexing | ScanStatus::Refreshing => TimestampState::Pending,
+        ScanStatus::Ready | ScanStatus::Error(_) => TimestampState::Unavailable,
+      }) {
+      TimestampState::Pending => "...".to_owned(),
+      TimestampState::Available(modified) => {
+        format_timestamp(modified).unwrap_or_else(|| "-".to_owned())
+      }
+      TimestampState::Unavailable => "-".to_owned(),
+    }
+  }
 }
 
 fn parent_entry(path: &Path) -> Option<DirectoryEntry> {
@@ -740,6 +888,66 @@ fn navigation_entries(path: &Path) -> Vec<DirectoryEntry> {
   entries
 }
 
+fn format_timestamp(modified: SystemTime) -> Option<String> {
+  let elapsed = modified.duration_since(UNIX_EPOCH).ok()?;
+  let timestamp = OffsetDateTime::from_unix_timestamp_nanos(elapsed.as_nanos() as i128).ok()?;
+  let offset = UtcOffset::local_offset_at(timestamp).ok()?;
+  let formatted = timestamp.to_offset(offset).format(TIMESTAMP_FORMAT).ok()?;
+  (UnicodeWidthStr::width(formatted.as_str()) == TIMESTAMP_WIDTH).then_some(formatted)
+}
+
+fn format_entry_line(
+  marker: &str,
+  name: &str,
+  timestamp: &str,
+  width: usize,
+  name_column_width: Option<usize>,
+) -> String {
+  let marker_width = UnicodeWidthStr::width(marker);
+  let Some(name_column_width) = name_column_width else {
+    return format!(
+      "{marker}{}",
+      truncate_with_ellipsis(name, width.saturating_sub(marker_width))
+    );
+  };
+  if width < marker_width + name_column_width + TIMESTAMP_GAP + TIMESTAMP_WIDTH {
+    return format!(
+      "{marker}{}",
+      truncate_with_ellipsis(name, width.saturating_sub(marker_width))
+    );
+  }
+
+  let name = truncate_with_ellipsis(name, name_column_width);
+  let name_padding = name_column_width.saturating_sub(UnicodeWidthStr::width(name.as_str()));
+  let name_padding = " ".repeat(name_padding);
+  let gap = " ".repeat(TIMESTAMP_GAP);
+  format!("{marker}{name}{name_padding}{gap}{timestamp}")
+}
+
+fn truncate_with_ellipsis(text: &str, width: usize) -> String {
+  if UnicodeWidthStr::width(text) <= width {
+    return text.to_owned();
+  }
+  if width <= 3 {
+    return take_display_width(text, width);
+  }
+  format!("{}...", take_display_width(text, width - 3))
+}
+
+fn take_display_width(text: &str, width: usize) -> String {
+  let mut result = String::new();
+  let mut used = 0;
+  for character in text.chars() {
+    let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+    if used + character_width > width {
+      break;
+    }
+    result.push(character);
+    used += character_width;
+  }
+  result
+}
+
 fn put_line<W: Write>(
   output: &mut W,
   row: u16,
@@ -748,7 +956,7 @@ fn put_line<W: Write>(
   color: Color,
   selected: bool,
 ) -> io::Result<()> {
-  let text = text.chars().take(width).collect::<String>();
+  let text = take_display_width(text, width);
   queue!(
     output,
     MoveTo(0, row),
@@ -770,6 +978,12 @@ fn put_line<W: Write>(
 mod tests {
   use super::*;
 
+  const TEST_NARROW_LINE_WIDTH: usize = 32;
+  const TEST_WIDE_LINE_WIDTH: usize = 80;
+  const TEST_NARROW_NAME_COLUMN_WIDTH: usize = 10;
+  const TEST_WIDE_NAME_COLUMN_WIDTH: usize = 24;
+  const TEST_TINY_LINE_WIDTH: usize = 20;
+
   fn app_with_entries(current_dir: PathBuf, entries: Vec<DirectoryEntry>, selected: usize) -> App {
     let visible_indices = (0..entries.len()).collect();
     App {
@@ -784,9 +998,126 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     }
+  }
+
+  fn finish_scan(app: &mut App) {
+    while app.scan.is_some() {
+      app.poll_scan_events();
+      std::thread::yield_now();
+    }
+  }
+
+  #[test]
+  fn formats_local_timestamps_with_fixed_width() {
+    let timestamp = format_timestamp(SystemTime::now()).expect("current time should format");
+
+    assert_eq!(timestamp.len(), TIMESTAMP_WIDTH);
+    assert_eq!(&timestamp[4..5], "-");
+    assert_eq!(&timestamp[7..8], "-");
+    assert_eq!(&timestamp[10..11], " ");
+    assert_eq!(&timestamp[13..14], ":");
+  }
+
+  #[test]
+  fn entry_layout_truncates_names_without_mutating_the_source() {
+    let name = "a-very-long-entry-name";
+    let timestamp = "2026-09-16 12:34";
+
+    let narrow = format_entry_line(
+      "> ",
+      name,
+      timestamp,
+      TEST_NARROW_LINE_WIDTH,
+      Some(TEST_NARROW_NAME_COLUMN_WIDTH),
+    );
+    assert!(narrow.contains("..."));
+    assert!(narrow.ends_with(timestamp));
+    assert!(UnicodeWidthStr::width(narrow.as_str()) <= TEST_NARROW_LINE_WIDTH);
+
+    let wide = format_entry_line(
+      "  ",
+      name,
+      timestamp,
+      TEST_WIDE_LINE_WIDTH,
+      Some(TEST_WIDE_NAME_COLUMN_WIDTH),
+    );
+    assert!(wide.contains(name));
+    assert!(wide.ends_with(timestamp));
+
+    let too_narrow = format_entry_line("  ", name, timestamp, TEST_TINY_LINE_WIDTH, None);
+    assert!(!too_narrow.contains(timestamp));
+    assert!(too_narrow.contains("..."));
+
+    let wide_name = format_entry_line(
+      "  ",
+      "wide-directory-name",
+      timestamp,
+      TEST_NARROW_LINE_WIDTH,
+      Some(TEST_NARROW_NAME_COLUMN_WIDTH),
+    );
+    assert!(wide_name.ends_with(timestamp));
+    assert!(UnicodeWidthStr::width(wide_name.as_str()) <= TEST_NARROW_LINE_WIDTH);
+
+    let short = format_entry_line("  ", "src", timestamp, TEST_WIDE_LINE_WIDTH, Some(12));
+    let medium = format_entry_line(
+      "  ",
+      "Cargo.toml",
+      timestamp,
+      TEST_WIDE_LINE_WIDTH,
+      Some(12),
+    );
+    assert_eq!(short.find(timestamp), medium.find(timestamp));
+  }
+
+  #[test]
+  fn name_column_uses_the_total_line_width_limit() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(
+      current_dir.clone(),
+      vec![DirectoryEntry {
+        name: "this-entry-name-is-deliberately-longer-than-fifty-eight-cells".to_owned(),
+        path: current_dir.join("long-entry"),
+        is_directory: true,
+      }],
+      0,
+    );
+    app.refresh_visible();
+
+    assert_eq!(app.name_column_width(MAX_ENTRY_LINE_WIDTH), Some(58));
+    assert_eq!(app.name_column_width(120), Some(58));
+    assert_eq!(app.name_column_width(70), Some(48));
+    assert_eq!(app.name_column_width(25), None);
+  }
+
+  #[test]
+  fn metadata_updates_replace_pending_state_by_path() {
+    let path = PathBuf::from("/tmp/current/entry");
+    let mut app = app_with_entries(
+      PathBuf::from("/tmp/current"),
+      vec![DirectoryEntry {
+        name: "entry".to_owned(),
+        path: path.clone(),
+        is_directory: true,
+      }],
+      0,
+    );
+    app.status = ScanStatus::Refreshing;
+    app.timestamps.insert(path.clone(), TimestampState::Pending);
+
+    app.apply_scan_event(ScanEvent::MetadataChunk(vec![EntryMetadata {
+      path: path.clone(),
+      modified: Some(UNIX_EPOCH),
+    }]));
+
+    assert!(matches!(
+      app.timestamps.get(&path),
+      Some(TimestampState::Available(modified)) if *modified == UNIX_EPOCH
+    ));
   }
 
   #[test]
@@ -809,6 +1140,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1011,6 +1344,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1035,6 +1370,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1082,6 +1419,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1118,6 +1457,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1159,6 +1500,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1195,6 +1538,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1260,6 +1605,8 @@ mod tests {
       cache: None,
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Indexing,
     };
@@ -1495,8 +1842,8 @@ mod tests {
     let mut app = App::with_cache(directory.clone(), Some(cache));
 
     assert_eq!(app.filter_kind, FilterKind::Fuzzy);
-    assert!(matches!(app.status, ScanStatus::Ready));
-    assert!(app.scan.is_none());
+    assert!(matches!(app.status, ScanStatus::Refreshing));
+    assert!(app.scan.is_some());
     assert_eq!(app.entries[0].name, "..");
     assert_eq!(app.entries[1].name, ".");
     assert_eq!(app.selected_path(), Some(directory.clone()));
@@ -1509,6 +1856,17 @@ mod tests {
         .count(),
       1
     );
+    assert!(matches!(
+      app.timestamps.get(&child),
+      Some(TimestampState::Pending)
+    ));
+
+    finish_scan(&mut app);
+    assert!(matches!(app.status, ScanStatus::Ready));
+    assert!(matches!(
+      app.timestamps.get(&child),
+      Some(TimestampState::Available(_))
+    ));
 
     app.selected = app
       .visible_indices
@@ -1517,12 +1875,14 @@ mod tests {
       .unwrap();
     app.remember_selection();
     app.start_scan();
+    finish_scan(&mut app);
 
     assert_eq!(app.selected_path(), Some(child.clone()));
 
     app.filter_kind = FilterKind::Substring;
     app.filter_query = "child".to_owned();
     app.start_scan();
+    finish_scan(&mut app);
 
     assert_eq!(app.filter_kind, FilterKind::Fuzzy);
     assert!(app.filter_query.is_empty());
@@ -1557,6 +1917,8 @@ mod tests {
       cache: Some(cache.clone()),
       scan: None,
       scan_fingerprint: Some(fingerprint),
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1607,6 +1969,8 @@ mod tests {
       cache: Some(cache.clone()),
       scan: None,
       scan_fingerprint: Some(fingerprint),
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };
@@ -1663,6 +2027,8 @@ mod tests {
       cache: Some(cache),
       scan: None,
       scan_fingerprint: None,
+      timestamps: HashMap::new(),
+      max_visible_name_width: 0,
       selection: SelectionState::default(),
       status: ScanStatus::Ready,
     };

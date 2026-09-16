@@ -40,9 +40,8 @@
     <details>
       <summary><strong>Skip repeat scans</strong></summary>
       <p>
-        Visited directories are stored with a fingerprint. An unchanged
-        directory can be shown from the persistent cache without a full scan;
-        missing or stale cache entries trigger a fresh scan instead.
+        Visited directories are cached and reused when unchanged, avoiding a
+        full scan. Missing or stale cache entries trigger a fresh scan instead.
       </p>
     </details>
   </li>
@@ -174,7 +173,7 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
   on a file also finishes in the current directory.
 - **Files:** Press `F` in normal navigation mode to toggle direct child files
   and other non-directory entries. Press it again to return to directory-only
-  mode. File-visible scans bypass the persistent directory cache.
+  mode.
 - **Move:** Use `Up`/`Down` or `j`/`k` to move the selection.
 - **Open:** Press `Enter`/`Right` or `l` to open the selected directory. These
   keys have no effect on files or other non-directory entries.
