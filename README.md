@@ -182,7 +182,7 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
   selects the current directory instead.
 - **Cancel:** Press `Esc` to clear an active filter; press it again, or use
   `Ctrl-C`, to cancel without selecting a directory.
-- **Rescan:** Press `r` to scan the current directory again.
+- **Rescan:** Press `r` to bypass the cache and scan the current directory again.
 - **Filter:** Press `/` to enter filter mode. Typed text uses fuzzy matching by
   default.
 - **Toggle filter:** Press `Tab` in filter mode to switch between fuzzy and

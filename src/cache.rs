@@ -10,7 +10,7 @@ use std::{
 use crate::scan::DirectoryEntry;
 
 const MAGIC: &[u8; 8] = b"FASTCACH";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 const MAX_CACHE_FILES: usize = 256;
@@ -572,6 +572,29 @@ mod tests {
       .load(&directory)
       .expect_err("corruption should be reported");
     assert_eq!(error.kind(), ErrorKind::InvalidData);
+  }
+
+  #[test]
+  fn rejects_legacy_cache_records() {
+    let root = TemporaryDirectory::new();
+    let directory = root.0.join("workspace");
+    fs::create_dir(&directory).expect("workspace should be created");
+    let cache = DirectoryCache::new(root.0.join("cache"));
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    let record = CacheRecord {
+      directory: directory.clone(),
+      fingerprint,
+      entries: Vec::new(),
+    };
+    let mut bytes = encode_record(&record).unwrap();
+    bytes[MAGIC.len()..MAGIC.len() + 4].copy_from_slice(&1u32.to_le_bytes());
+    fs::create_dir_all(&cache.root).unwrap();
+    fs::write(cache.record_path(&directory).unwrap(), bytes).unwrap();
+
+    let error = cache
+      .load(&directory)
+      .expect_err("legacy cache records should be rejected");
+    assert!(error.to_string().contains("unsupported version"));
   }
 
   #[test]

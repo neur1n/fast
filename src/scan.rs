@@ -1,6 +1,6 @@
 use std::{
   fs, io,
-  path::PathBuf,
+  path::{Path, PathBuf},
   sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -25,7 +25,7 @@ pub struct DirectoryEntry {
 pub enum ScanEvent {
   Chunk(Vec<DirectoryEntry>),
   MetadataChunk(Vec<EntryMetadata>),
-  Finished,
+  Finished { cacheable: bool },
   Error(String),
 }
 
@@ -108,6 +108,7 @@ fn scan_directory(
 
   let mut chunk = Vec::with_capacity(CHUNK_SIZE);
   let mut metadata_chunk = Vec::with_capacity(CHUNK_SIZE);
+  let mut cacheable = !include_files;
   for result in directory {
     if is_cancelled(&cancel) {
       return;
@@ -115,14 +116,19 @@ fn scan_directory(
 
     let entry = match result {
       Ok(entry) => entry,
-      Err(_) => continue,
-    };
-    let file_type = match entry.file_type() {
-      Ok(file_type) => file_type,
-      Err(_) => continue,
+      Err(_) => {
+        cacheable = false;
+        continue;
+      }
     };
     let path = entry.path();
-    let is_directory = file_type.is_dir() || (file_type.is_symlink() && path.is_dir());
+    let is_directory = match resolve_directory(&entry, &path) {
+      Ok(is_directory) => is_directory,
+      Err(()) => {
+        cacheable = false;
+        false
+      }
+    };
     if !is_directory && !include_files {
       continue;
     }
@@ -156,7 +162,45 @@ fn scan_directory(
       return;
     }
   }
-  let _ = send_event(&sender, ScanEvent::Finished, &cancel);
+  let _ = send_event(&sender, ScanEvent::Finished { cacheable }, &cancel);
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum EntryType {
+  Directory,
+  File,
+  Symlink,
+  Unknown,
+}
+
+fn resolve_directory(entry: &fs::DirEntry, path: &Path) -> Result<bool, ()> {
+  let entry_type = entry
+    .file_type()
+    .map(classify_file_type)
+    .unwrap_or(EntryType::Unknown);
+  resolve_entry_type(entry_type, path)
+}
+
+fn resolve_entry_type(entry_type: EntryType, path: &Path) -> Result<bool, ()> {
+  match entry_type {
+    EntryType::Directory => Ok(true),
+    EntryType::File => Ok(false),
+    EntryType::Symlink | EntryType::Unknown => fs::metadata(path)
+      .map(|metadata| metadata.is_dir())
+      .map_err(|_| ()),
+  }
+}
+
+fn classify_file_type(file_type: fs::FileType) -> EntryType {
+  if file_type.is_dir() {
+    EntryType::Directory
+  } else if file_type.is_file() {
+    EntryType::File
+  } else if file_type.is_symlink() {
+    EntryType::Symlink
+  } else {
+    EntryType::Unknown
+  }
 }
 
 fn refresh_metadata(paths: Vec<PathBuf>, sender: SyncSender<ScanEvent>, cancel: Arc<AtomicBool>) {
@@ -180,7 +224,7 @@ fn refresh_metadata(paths: Vec<PathBuf>, sender: SyncSender<ScanEvent>, cancel: 
   if !chunk.is_empty() && !send_event(&sender, ScanEvent::MetadataChunk(chunk), &cancel) {
     return;
   }
-  let _ = send_event(&sender, ScanEvent::Finished, &cancel);
+  let _ = send_event(&sender, ScanEvent::Finished { cacheable: false }, &cancel);
 }
 
 pub(crate) fn modified_time(path: &std::path::Path) -> Option<SystemTime> {
@@ -257,11 +301,17 @@ mod tests {
 
     let mut entries = Vec::new();
     let mut finished = false;
+    let mut cacheable = false;
     while let Ok(event) = receiver.try_recv() {
       match event {
         ScanEvent::Chunk(chunk) => entries.extend(chunk),
         ScanEvent::MetadataChunk(_) => {}
-        ScanEvent::Finished => finished = true,
+        ScanEvent::Finished {
+          cacheable: finished_cacheable,
+        } => {
+          finished = true;
+          cacheable = finished_cacheable;
+        }
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
     }
@@ -274,6 +324,57 @@ mod tests {
     assert_eq!(names, ["a-directory", "z-directory"]);
     assert!(entries.iter().all(|entry| entry.is_directory));
     assert!(finished);
+    assert!(cacheable);
+  }
+
+  #[test]
+  fn metadata_fallback_resolves_unknown_directory_types() {
+    let root = TemporaryDirectory::new();
+    let directory = root.0.join("directory");
+    fs::create_dir(&directory).expect("directory should be created");
+    let file = root.0.join("file.txt");
+    File::create(&file).expect("file should be created");
+
+    assert_eq!(resolve_entry_type(EntryType::Unknown, &directory), Ok(true));
+    assert_eq!(resolve_entry_type(EntryType::Unknown, &file), Ok(false));
+  }
+
+  #[test]
+  fn metadata_fallback_failure_makes_type_unresolved() {
+    let missing = env::temp_dir().join(format!(
+      "fast-scan-type-missing-{}-{}",
+      std::process::id(),
+      SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after the Unix epoch")
+        .as_nanos()
+    ));
+
+    assert!(resolve_entry_type(EntryType::Unknown, &missing).is_err());
+  }
+
+  #[test]
+  fn directory_without_child_directories_is_cacheable() {
+    let root = TemporaryDirectory::new();
+    File::create(root.0.join("file.txt")).expect("file should be created");
+
+    let (sender, receiver) = mpsc::sync_channel(4);
+    let cancel = Arc::new(AtomicBool::new(false));
+    scan_directory(root.0.clone(), sender, Arc::clone(&cancel), false);
+
+    let mut entries = Vec::new();
+    let mut completion = None;
+    while let Ok(event) = receiver.try_recv() {
+      match event {
+        ScanEvent::Chunk(chunk) => entries.extend(chunk),
+        ScanEvent::MetadataChunk(_) => {}
+        ScanEvent::Finished { cacheable } => completion = Some(cacheable),
+        ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
+      }
+    }
+
+    assert!(entries.is_empty());
+    assert_eq!(completion, Some(true));
   }
 
   #[test]
@@ -311,6 +412,7 @@ mod tests {
     let mut chunk_count = 0;
     let mut entry_count = 0;
     let mut finished = false;
+    let mut cacheable = false;
     while let Ok(event) = receiver.try_recv() {
       match event {
         ScanEvent::Chunk(entries) => {
@@ -318,7 +420,12 @@ mod tests {
           entry_count += entries.len();
         }
         ScanEvent::MetadataChunk(_) => {}
-        ScanEvent::Finished => finished = true,
+        ScanEvent::Finished {
+          cacheable: finished_cacheable,
+        } => {
+          finished = true;
+          cacheable = finished_cacheable;
+        }
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
     }
@@ -326,6 +433,7 @@ mod tests {
     assert_eq!(entry_count, CHUNK_SIZE + 1);
     assert_eq!(chunk_count, 2);
     assert!(finished);
+    assert!(cacheable);
   }
 
   #[test]
@@ -354,7 +462,7 @@ mod tests {
       match event {
         ScanEvent::Chunk(chunk) => entries.extend(chunk),
         ScanEvent::MetadataChunk(updates) => metadata.extend(updates),
-        ScanEvent::Finished => {}
+        ScanEvent::Finished { cacheable } => assert!(!cacheable),
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
     }
@@ -391,7 +499,10 @@ mod tests {
       }
       event => panic!("unexpected event: {event:?}"),
     }
-    assert!(matches!(receiver.try_recv(), Ok(ScanEvent::Finished)));
+    assert!(matches!(
+      receiver.try_recv(),
+      Ok(ScanEvent::Finished { cacheable: false })
+    ));
   }
 
   #[test]
@@ -412,7 +523,10 @@ mod tests {
           chunk_count += 1;
           entry_count += entries.len();
         }
-        ScanEvent::Finished => finished = true,
+        ScanEvent::Finished { cacheable } => {
+          finished = true;
+          assert!(!cacheable);
+        }
         event => panic!("unexpected event: {event:?}"),
       }
     }
@@ -457,7 +571,12 @@ mod tests {
           assert!(entries.iter().all(|entry| !entry.is_directory));
         }
         ScanEvent::MetadataChunk(_) => {}
-        ScanEvent::Finished => finished = true,
+        ScanEvent::Finished {
+          cacheable: finished_cacheable,
+        } => {
+          finished = true;
+          assert!(!finished_cacheable);
+        }
         ScanEvent::Error(error) => panic!("unexpected scan error: {error}"),
       }
     }

@@ -107,7 +107,7 @@ impl App {
       selection: SelectionState::default(),
       status: ScanStatus::Indexing,
     };
-    app.start_scan();
+    app.start_scan(false);
     app
   }
 
@@ -280,9 +280,9 @@ impl App {
     match event {
       ScanEvent::Chunk(entries) => self.apply_entries(entries),
       ScanEvent::MetadataChunk(updates) => self.apply_metadata(updates),
-      ScanEvent::Finished => {
+      ScanEvent::Finished { cacheable } => {
         self.finish_pending_selection();
-        self.persist_scan();
+        self.persist_scan(cacheable);
         self.status = ScanStatus::Ready;
         self.scan = None;
         self.scan_fingerprint = None;
@@ -345,7 +345,7 @@ impl App {
     }
   }
 
-  fn start_scan(&mut self) {
+  fn start_scan(&mut self, bypass_cache: bool) {
     self.stop_scan();
     self.selection.pending = self
       .selection
@@ -376,7 +376,8 @@ impl App {
     self.select_current_directory();
     self.try_restore_pending_selection();
 
-    if !self.show_files
+    if !bypass_cache
+      && !self.show_files
       && let Some(cache) = self.cache.as_ref()
       && let Ok(Some(entries)) = cache.load(&self.current_dir)
     {
@@ -431,8 +432,8 @@ impl App {
     }
   }
 
-  fn persist_scan(&self) {
-    if self.show_files {
+  fn persist_scan(&self, cacheable: bool) {
+    if !cacheable || self.show_files {
       return;
     }
     let (Some(cache), Some(before)) = (self.cache.as_ref(), self.scan_fingerprint.as_ref()) else {
@@ -445,7 +446,7 @@ impl App {
   fn toggle_files(&mut self) {
     self.remember_selection();
     self.show_files = !self.show_files;
-    self.start_scan();
+    self.start_scan(false);
   }
 
   fn open_selected(&mut self) {
@@ -468,7 +469,7 @@ impl App {
         .remembered
         .insert(self.current_dir.clone(), previous_dir);
     }
-    self.start_scan();
+    self.start_scan(false);
   }
 
   fn open_parent(&mut self) {
@@ -485,12 +486,12 @@ impl App {
       .selection
       .remembered
       .insert(self.current_dir.clone(), child);
-    self.start_scan();
+    self.start_scan(false);
   }
 
   fn rescan(&mut self) {
     self.remember_selection();
-    self.start_scan();
+    self.start_scan(true);
   }
 
   fn move_selection(&mut self, delta: isize) {
@@ -1294,7 +1295,7 @@ mod tests {
       path: current_dir.join("file.txt"),
       is_directory: false,
     }]));
-    app.apply_scan_event(ScanEvent::Finished);
+    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
 
     assert_eq!(app.selected_path(), Some(current_dir));
   }
@@ -1648,7 +1649,7 @@ mod tests {
       is_directory: true,
     }]));
     assert_eq!(app.selected_path(), Some(current_dir.clone()));
-    app.apply_scan_event(ScanEvent::Finished);
+    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
     assert_eq!(app.selected_path(), Some(current_dir));
     assert!(app.selection.pending.is_none());
   }
@@ -1671,12 +1672,12 @@ mod tests {
   fn empty_directory_keeps_the_current_directory_selected() {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-    app.apply_scan_event(ScanEvent::Finished);
+    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
     assert_eq!(app.selected_path(), Some(current_dir.clone()));
 
     let root = PathBuf::from("/");
     let mut app = app_with_entries(root.clone(), navigation_entries(&root), 0);
-    app.apply_scan_event(ScanEvent::Finished);
+    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
     assert_eq!(app.selected_path(), Some(root));
   }
 
@@ -1772,7 +1773,7 @@ mod tests {
       .selection
       .remembered
       .insert(current_dir.clone(), selected_path.clone());
-    app.start_scan();
+    app.start_scan(false);
     app.stop_scan();
 
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
@@ -1798,7 +1799,7 @@ mod tests {
       .selection
       .remembered
       .insert(current_dir.clone(), current_dir.join("missing"));
-    app.start_scan();
+    app.start_scan(false);
     app.stop_scan();
 
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
@@ -1806,7 +1807,7 @@ mod tests {
       path: current_dir.join("other"),
       is_directory: true,
     }]));
-    app.apply_scan_event(ScanEvent::Finished);
+    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
 
     assert_eq!(app.selected_path(), Some(current_dir));
     assert!(app.selected < app.visible_indices.len());
@@ -1874,18 +1875,111 @@ mod tests {
       .position(|&index| app.entries[index].path == child)
       .unwrap();
     app.remember_selection();
-    app.start_scan();
+    app.start_scan(false);
     finish_scan(&mut app);
 
     assert_eq!(app.selected_path(), Some(child.clone()));
 
     app.filter_kind = FilterKind::Substring;
     app.filter_query = "child".to_owned();
-    app.start_scan();
+    app.start_scan(false);
     finish_scan(&mut app);
 
     assert_eq!(app.filter_kind, FilterKind::Fuzzy);
     assert!(app.filter_query.is_empty());
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn rescan_bypasses_a_valid_cache() {
+    let root = std::env::temp_dir().join(format!(
+      "fast-app-force-rescan-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    let directory = root.join("workspace");
+    let cache = DirectoryCache::new(root.join("cache"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let fresh = directory.join("fresh");
+    std::fs::create_dir(&fresh).unwrap();
+    let stale = directory.join("stale");
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    assert!(
+      cache
+        .store_if_unchanged(
+          &directory,
+          &fingerprint,
+          &[DirectoryEntry {
+            name: "stale".to_owned(),
+            path: stale,
+            is_directory: true,
+          }],
+        )
+        .unwrap()
+    );
+
+    let mut app = App::with_cache(directory.clone(), Some(cache.clone()));
+    assert!(app.entries.iter().any(|entry| entry.name == "stale"));
+
+    app.rescan();
+    assert!(matches!(app.status, ScanStatus::Indexing));
+    finish_scan(&mut app);
+
+    assert!(app.entries.iter().any(|entry| entry.path == fresh));
+    assert!(!app.entries.iter().any(|entry| entry.name == "stale"));
+    assert_eq!(
+      cache.load(&directory).unwrap(),
+      Some(vec![DirectoryEntry {
+        name: "fresh".to_owned(),
+        path: fresh,
+        is_directory: true,
+      }])
+    );
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn incomplete_scan_does_not_replace_the_cache() {
+    let root = std::env::temp_dir().join(format!(
+      "fast-app-incomplete-scan-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    let directory = root.join("workspace");
+    let cache = DirectoryCache::new(root.join("cache"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let cached_path = directory.join("cached");
+    std::fs::create_dir(&cached_path).unwrap();
+    let cached_entries = vec![DirectoryEntry {
+      name: "cached".to_owned(),
+      path: cached_path,
+      is_directory: true,
+    }];
+    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
+    assert!(
+      cache
+        .store_if_unchanged(&directory, &fingerprint, &cached_entries)
+        .unwrap()
+    );
+
+    let mut app = App::with_cache(directory.clone(), Some(cache.clone()));
+    app.stop_scan();
+    app.entries = navigation_entries(&directory);
+    app.entries.push(DirectoryEntry {
+      name: "replacement".to_owned(),
+      path: directory.join("replacement"),
+      is_directory: true,
+    });
+    app.scan_fingerprint = Some(fingerprint);
+    app.persist_scan(false);
+
+    assert_eq!(cache.load(&directory).unwrap(), Some(cached_entries));
     let _ = std::fs::remove_dir_all(root);
   }
 
@@ -1928,7 +2022,7 @@ mod tests {
       is_directory: true,
     });
 
-    app.persist_scan();
+    app.persist_scan(true);
 
     assert_eq!(
       cache.load(&directory).unwrap(),
@@ -1980,7 +2074,7 @@ mod tests {
       is_directory: false,
     });
 
-    app.persist_scan();
+    app.persist_scan(true);
 
     assert_eq!(cache.load(&directory).unwrap(), None);
     let _ = std::fs::remove_dir_all(root);
@@ -2033,7 +2127,7 @@ mod tests {
       status: ScanStatus::Ready,
     };
 
-    app.start_scan();
+    app.start_scan(false);
 
     assert!(app.scan.is_some());
     app.stop_scan();
