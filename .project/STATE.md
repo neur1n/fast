@@ -2,33 +2,31 @@
 
 > Derived navigation only. Reconcile against canonical records before acting.
 
-- Status: active; Phase 5 entry timestamps completed, governance reconciliation
-  pending commit, Phase 4 prefetch deferred
-- Last reconciled: 2026-09-16
+- Status: active; Phase 6 filesystem/cache resilience approved, Phase 4 prefetch
+  deferred
+- Last reconciled: 2026-09-18
 - Roadmap: .project/roadmap/ROADMAP-0001.md
-- Current phase: phase-4-bounded-prefetch
-- Selected plan: .project/plan/PLAN-0004-phase-4-bounded-prefetch.md
-- Selected issue: none
+- Current phase: phase-6-filesystem-scan-and-cache-resilience
+- Selected plan: .project/plan/PLAN-0010-filesystem-scan-and-cache-resilience-0.0.9.md
+- Selected issue: .project/issue/ISSUE-0001-filesystem-scan-and-cache-resilience.md
 
 ## Current Objective
 
-Revisit bounded child-directory prefetch only if measured workloads demonstrate
-that the current shallow, chunked scan behavior is insufficient. The accepted
-Phase 5 timestamp implementation remains part of the completed baseline.
+Implement the approved `0.0.9` filesystem scan and cache resilience work while
+leaving bounded child-directory prefetch deferred.
 
 ## Last Completed
 
-- The timestamp plan and cache freshness decision were approved on 2026-09-15.
-- Entry modification timestamps were implemented and accepted in `REVIEW-0012`.
+- The `0.0.9` scan fallback, forced-rescan, and cache-completeness governance
+  scope was accepted in `DECISION-0011` and approved in `PLAN-0010`.
 
 ## Next Action
 
-- Commit the governance reconciliation before continuing with the deferred
-  Phase 4 frontier.
+- Implement `PLAN-0010` and prepare its exact-tree implementation review.
 
 ## Blockers
 
-- Commit the governance reconciliation.
+- None.
 
 ## Pending Human Actions
 
@@ -38,6 +36,7 @@ Phase 5 timestamp implementation remains part of the completed baseline.
 
 - .project/roadmap/ROADMAP-0001.md
 - .project/plan/PLAN-0004-phase-4-bounded-prefetch.md
-- .project/review/REVIEW-0012-entry-modification-timestamps.md
-- .project/decision/DECISION-0010-entry-modification-timestamps.md
 - .project/decision/DECISION-0009-current-directory-default-selection.md
+- .project/decision/DECISION-0011-filesystem-type-and-cache-completeness.md
+- .project/issue/ISSUE-0001-filesystem-scan-and-cache-resilience.md
+- .project/plan/PLAN-0010-filesystem-scan-and-cache-resilience-0.0.9.md

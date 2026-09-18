@@ -40,6 +40,9 @@ system by default.
   `DECISION-0010` and were implemented in commit
   `715028818636c6bd26e3fd1a3cb7680e7cc83492`; the implementation is accepted in
   `REVIEW-0012` and does not depend on the deferred Phase 4 prefetch.
+- Filesystem scan and cache resilience for target version `0.0.9` is approved in
+  `PLAN-0010` and `DECISION-0011`, with `ISSUE-0001` active; it preserves the
+  accepted timestamp baseline and does not promote Phase 4 prefetch.
 
 ## Phase
 
@@ -164,6 +167,20 @@ system by default.
   `e03e97dfd18e5a2f74df5f8c2e6c7476729181e1`. This workstream was independent
   of deferred Phase 4 prefetch.
 - Dependency: phase-3-current-directory-default-selection
+
+### Phase 6: Filesystem Scan and Cache Resilience
+
+- Objective: Make direct listings robust when filesystems omit entry type data,
+  provide a cache-bypassing `r` rescan, and prevent incomplete scans from
+  becoming persistent directory-listing authority. Release the work as package
+  version `0.0.9`.
+- Gate: Unknown/failed type fallback, complete-versus-incomplete scan handling,
+  forced rescan cache bypass, valid empty-result caching, legacy cache
+  invalidation, regression coverage, documentation, and synchronized `0.0.9`
+  metadata pass automated checks.
+- Status: Governance approved in `PLAN-0010` and `DECISION-0011`; implementation
+  pending review.
+- Dependency: phase-5-entry-modification-timestamps
 
 ## Assumption
 

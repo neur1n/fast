@@ -4,5 +4,5 @@
   "project": "fast",
   "state": ".project/STATE.md",
   "roadmap": ".project/roadmap/ROADMAP-0001.md",
-  "plan": ".project/plan/PLAN-0004-phase-4-bounded-prefetch.md"
+  "plan": ".project/plan/PLAN-0010-filesystem-scan-and-cache-resilience-0.0.9.md"
 }
