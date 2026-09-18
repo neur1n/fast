@@ -3,7 +3,7 @@ id: DECISION-0011
 status: accepted
 date: 2026-09-18
 supersedes: none
-review: none
+review: .project/review/REVIEW-0013-filesystem-scan-and-cache-resilience.md
 ---
 
 # Decision: Filesystem Type Fallback and Cache Completeness

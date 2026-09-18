@@ -1,10 +1,10 @@
 ---
 id: PLAN-0010
-status: approved
+status: completed
 roadmap: ROADMAP-0001
 phase: phase-6-filesystem-scan-and-cache-resilience
 issue: .project/issue/ISSUE-0001-filesystem-scan-and-cache-resilience.md
-review: none
+review: .project/review/REVIEW-0013-filesystem-scan-and-cache-resilience.md
 ---
 
 # Plan: Filesystem Scan and Cache Resilience for 0.0.9
@@ -128,4 +128,10 @@ navigator's shallow, responsive, browse-only contract.
 
 ## Completion Evidence
 
-- Pending implementation and exact-tree review.
+- Commit `1f5634f8c5dc1dc5f6c090a088ebc67f3ce99cfa` implements the approved
+  filesystem fallback, scan-completeness, forced-rescan, cache-invalidation,
+  documentation, and `0.0.9` package metadata scope.
+- The committed implementation passes the recorded formatting, lint, test,
+  check, version, and diff validations.
+- Human acceptance and the committed implementation disposition are recorded
+  in `REVIEW-0013`.

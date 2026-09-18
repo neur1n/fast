@@ -40,9 +40,9 @@ system by default.
   `DECISION-0010` and were implemented in commit
   `715028818636c6bd26e3fd1a3cb7680e7cc83492`; the implementation is accepted in
   `REVIEW-0012` and does not depend on the deferred Phase 4 prefetch.
-- Filesystem scan and cache resilience for target version `0.0.9` is approved in
-  `PLAN-0010` and `DECISION-0011`, with `ISSUE-0001` active; it preserves the
-  accepted timestamp baseline and does not promote Phase 4 prefetch.
+- Filesystem scan and cache resilience for target version `0.0.9` is completed
+  and accepted in `REVIEW-0013`; it preserves the accepted timestamp baseline
+  and does not promote Phase 4 prefetch.
 
 ## Phase
 
@@ -178,8 +178,9 @@ system by default.
   forced rescan cache bypass, valid empty-result caching, legacy cache
   invalidation, regression coverage, documentation, and synchronized `0.0.9`
   metadata pass automated checks.
-- Status: Governance approved in `PLAN-0010` and `DECISION-0011`; implementation
-  pending review.
+- Status: Completed and accepted in `REVIEW-0013`; implementation commit
+  `1f5634f8c5dc1dc5f6c090a088ebc67f3ce99cfa` has tree
+  `c9201f402ad55500bc7de8a810aaf4406a4e411b`.
 - Dependency: phase-5-entry-modification-timestamps
 
 ## Assumption

@@ -1,9 +1,9 @@
 ---
 id: ISSUE-0001
-status: active
+status: completed
 plan: PLAN-0010
 blocked_by: []
-review: none
+review: .project/review/REVIEW-0013-filesystem-scan-and-cache-resilience.md
 ---
 
 # Issue: Filesystem Scan and Cache Resilience
@@ -41,14 +41,24 @@ is released as package version `0.0.9`.
 
 ## Verification Evidence
 
-- Pending implementation checks, manual filesystem tests, and candidate-tree
-  review.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --all-targets --all-features -- -D warnings` passed.
+- `cargo test --locked` passed with 72 tests.
+- `cargo check --locked` passed.
+- `cargo run --quiet -- --version` reported `fast 0.0.9`.
+- `git diff --check` passed.
+- Commit `1f5634f8c5dc1dc5f6c090a088ebc67f3ce99cfa` has candidate tree
+  `c9201f402ad55500bc7de8a810aaf4406a4e411b` and changes only the planned
+  implementation paths.
+- Human acceptance and the final implementation disposition are recorded in
+  `REVIEW-0013`.
 
 ## Blocker
 
 - Reason: none.
-- Resolution: none.
-- Pending action: implement the approved `PLAN-0010` scope.
+- Resolution: Human accepted the committed implementation and authorized
+  governance closure without a separate tree-ID review round.
+- Pending action: none.
 
 ## Deferred Work
 
