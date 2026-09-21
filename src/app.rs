@@ -8,9 +8,10 @@ use time::{OffsetDateTime, UtcOffset};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crossterm::{
+  clipboard::CopyToClipboard,
   cursor::MoveTo,
   event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-  queue,
+  execute, queue,
   style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
   terminal::{self, Clear, ClearType},
 };
@@ -71,17 +72,17 @@ impl TimestampState {
 #[derive(Default)]
 struct SelectionState {
   remembered: HashMap<PathBuf, PathBuf>,
-  pending: Option<PendingSelection>,
-}
-
-#[derive(Clone)]
-enum PendingSelection {
-  Remembered(PathBuf),
+  pending: Option<PathBuf>,
 }
 
 pub(crate) enum ExitAction {
   Select(PathBuf),
   Cancel,
+}
+
+enum KeyAction {
+  Exit(ExitAction),
+  Copy(PathBuf),
 }
 
 impl App {
@@ -118,9 +119,12 @@ impl App {
 
       if event::poll(EVENT_POLL_INTERVAL)?
         && let Event::Key(key) = event::read()?
-        && let Some(action) = self.handle_key(key)
       {
-        break action;
+        match self.handle_key(key) {
+          Some(KeyAction::Exit(action)) => break action,
+          Some(KeyAction::Copy(path)) => copy_path(output, &path)?,
+          None => {}
+        }
       }
     };
 
@@ -128,12 +132,12 @@ impl App {
     Ok(action)
   }
 
-  fn handle_key(&mut self, key: KeyEvent) -> Option<ExitAction> {
+  fn handle_key(&mut self, key: KeyEvent) -> Option<KeyAction> {
     if key.kind != KeyEventKind::Press {
       return None;
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-      return Some(ExitAction::Cancel);
+      return Some(KeyAction::Exit(ExitAction::Cancel));
     }
 
     if self.filter_mode {
@@ -143,7 +147,7 @@ impl App {
     match key.code {
       KeyCode::Esc => {
         if self.filter_query.is_empty() {
-          Some(ExitAction::Cancel)
+          Some(KeyAction::Exit(ExitAction::Cancel))
         } else {
           self.set_filter_query(String::new());
           None
@@ -157,9 +161,10 @@ impl App {
         self.toggle_files();
         None
       }
-      KeyCode::Char('q') | KeyCode::Char('Q') => {
-        self.selected_result_path().map(ExitAction::Select)
-      }
+      KeyCode::Char('q') | KeyCode::Char('Q') => self
+        .selected_result_path()
+        .map(|path| KeyAction::Exit(ExitAction::Select(path))),
+      KeyCode::Char('y') => self.selected_path().map(KeyAction::Copy),
       KeyCode::Up | KeyCode::Char('k') => {
         self.move_selection(-1);
         None
@@ -194,7 +199,7 @@ impl App {
     }
   }
 
-  fn handle_filter_key(&mut self, key: KeyEvent) -> Option<ExitAction> {
+  fn handle_filter_key(&mut self, key: KeyEvent) -> Option<KeyAction> {
     match key.code {
       KeyCode::Esc => {
         self.filter_mode = false;
@@ -347,12 +352,7 @@ impl App {
 
   fn start_scan(&mut self, bypass_cache: bool) {
     self.stop_scan();
-    self.selection.pending = self
-      .selection
-      .remembered
-      .get(&self.current_dir)
-      .cloned()
-      .map(PendingSelection::Remembered);
+    self.selection.pending = self.selection.remembered.get(&self.current_dir).cloned();
     self.entries = navigation_entries(&self.current_dir);
     self.max_visible_name_width = 0;
     self.timestamps = self
@@ -636,12 +636,10 @@ impl App {
     let Some(pending) = self.selection.pending.clone() else {
       return false;
     };
-    let position = match pending {
-      PendingSelection::Remembered(path) => self
-        .visible_indices
-        .iter()
-        .position(|&index| self.entries[index].path == path),
-    };
+    let position = self
+      .visible_indices
+      .iter()
+      .position(|&index| self.entries[index].path.as_path() == pending.as_path());
     let Some(position) = position else {
       return false;
     };
@@ -808,12 +806,12 @@ impl App {
         .to_owned()
     } else if self.filter_query.is_empty() {
       format!(
-        " / filter  Up/Down or j/k  Enter/l open  F files {}  Backspace/h parent  r rescan  q select  Esc cancel",
+        " / filter  Up/Down or j/k  Enter/l open  F files {}  y copy path  Backspace/h parent  r rescan  q select  Esc cancel",
         if self.show_files { "on" } else { "off" }
       )
     } else {
       format!(
-        " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  F files {}  Backspace/h parent  r rescan  q select  Esc clear",
+        " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  F files {}  y copy path  Backspace/h parent  r rescan  q select  Esc clear",
         if self.show_files { "on" } else { "off" }
       )
     }
@@ -975,6 +973,13 @@ fn put_line<W: Write>(
   )
 }
 
+fn copy_path<W: Write>(output: &mut W, path: &Path) -> io::Result<()> {
+  let Some(path) = path.to_str() else {
+    return Ok(());
+  };
+  execute!(output, CopyToClipboard::to_clipboard_from(path))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1011,6 +1016,14 @@ mod tests {
       app.poll_scan_events();
       std::thread::yield_now();
     }
+  }
+
+  fn temporary_cache_root(label: &str) -> PathBuf {
+    let suffix = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_nanos();
+    std::env::temp_dir().join(format!("fast-app-{label}-{}-{suffix}", std::process::id()))
   }
 
   #[test]
@@ -1122,6 +1135,91 @@ mod tests {
   }
 
   #[test]
+  fn copy_path_emits_an_osc52_clipboard_command() {
+    let mut output = Vec::new();
+
+    copy_path(&mut output, Path::new("/tmp/current/target")).unwrap();
+
+    assert_eq!(output, b"\x1b]52;c;L3RtcC9jdXJyZW50L3RhcmdldA==\x1b\\");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn copy_path_ignores_a_non_utf8_path() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    let path = PathBuf::from(OsString::from_vec(vec![b'/', 0xff]));
+    let mut output = Vec::new();
+
+    copy_path(&mut output, &path).unwrap();
+
+    assert!(output.is_empty());
+  }
+
+  #[test]
+  fn y_copies_the_highlighted_file_path_without_exiting() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let file_path = current_dir.join("file.txt");
+    let mut app = app_with_entries(
+      current_dir,
+      vec![DirectoryEntry {
+        name: "file.txt".to_owned(),
+        path: file_path.clone(),
+        is_directory: false,
+      }],
+      0,
+    );
+    app.show_files = true;
+
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert!(matches!(action, Some(KeyAction::Copy(path)) if path == file_path));
+  }
+
+  #[test]
+  fn y_copies_navigation_entry_paths() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
+    let parent = current_dir.parent().unwrap().to_path_buf();
+
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    assert!(matches!(action, Some(KeyAction::Copy(path)) if path == parent));
+
+    app.selected = 1;
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    assert!(matches!(action, Some(KeyAction::Copy(path)) if path == current_dir));
+  }
+
+  #[test]
+  fn y_in_filter_mode_remains_query_input() {
+    let current_dir = PathBuf::from("/tmp/current");
+    let mut app = app_with_entries(
+      current_dir.clone(),
+      vec![DirectoryEntry {
+        name: "target".to_owned(),
+        path: current_dir.join("target"),
+        is_directory: true,
+      }],
+      0,
+    );
+    app.filter_mode = true;
+
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert!(action.is_none());
+    assert_eq!(app.filter_query, "y");
+  }
+
+  #[test]
+  fn y_does_nothing_without_a_highlighted_entry() {
+    let mut app = app_with_entries(PathBuf::from("/tmp/current"), Vec::new(), 0);
+
+    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert!(action.is_none());
+  }
+
+  #[test]
   fn q_selects_the_highlighted_entry() {
     let current_dir = PathBuf::from("/tmp/current");
     let selected_path = current_dir.join("target");
@@ -1149,7 +1247,7 @@ mod tests {
 
     let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
     match action {
-      Some(ExitAction::Select(path)) => assert_eq!(path, selected_path),
+      Some(KeyAction::Exit(ExitAction::Select(path))) => assert_eq!(path, selected_path),
       _ => panic!("q should select the highlighted entry"),
     }
   }
@@ -1170,7 +1268,10 @@ mod tests {
 
     let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
 
-    assert!(matches!(action, Some(ExitAction::Select(path)) if path == current_dir));
+    assert!(matches!(
+      action,
+      Some(KeyAction::Exit(ExitAction::Select(path))) if path == current_dir
+    ));
   }
 
   #[test]
@@ -1353,7 +1454,10 @@ mod tests {
 
     let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
 
-    assert!(matches!(action, Some(ExitAction::Select(path)) if path == current_dir));
+    assert!(matches!(
+      action,
+      Some(KeyAction::Exit(ExitAction::Select(path))) if path == current_dir
+    ));
   }
 
   #[test]
@@ -1570,7 +1674,7 @@ mod tests {
     assert!(app.filter_query.is_empty());
     assert!(matches!(
       app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-      Some(ExitAction::Cancel)
+      Some(KeyAction::Exit(ExitAction::Cancel))
     ));
   }
 
@@ -1685,7 +1789,7 @@ mod tests {
   fn manual_selection_movement_overrides_pending_restoration() {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    app.selection.pending = Some(PendingSelection::Remembered(current_dir.join("alpha")));
+    app.selection.pending = Some(current_dir.join("alpha"));
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
@@ -1702,7 +1806,7 @@ mod tests {
   fn manual_home_and_end_override_pending_restoration() {
     let current_dir = PathBuf::from("/tmp/current");
     let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-    app.selection.pending = Some(PendingSelection::Remembered(current_dir.join("alpha")));
+    app.selection.pending = Some(current_dir.join("alpha"));
     app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "alpha".to_owned(),
@@ -1712,7 +1816,7 @@ mod tests {
     assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
 
     let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    app.selection.pending = Some(PendingSelection::Remembered(current_dir.join("alpha")));
+    app.selection.pending = Some(current_dir.join("alpha"));
     app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
     app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
       name: "alpha".to_owned(),
@@ -1815,14 +1919,7 @@ mod tests {
 
   #[test]
   fn uses_a_valid_cache_before_starting_a_scan() {
-    let root = std::env::temp_dir().join(format!(
-      "fast-app-cache-test-{}-{}",
-      std::process::id(),
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-    ));
+    let root = temporary_cache_root("cache");
     let directory = root.join("workspace");
     let cache = DirectoryCache::new(root.join("cache"));
     std::fs::create_dir_all(&directory).unwrap();
@@ -1892,14 +1989,7 @@ mod tests {
 
   #[test]
   fn rescan_bypasses_a_valid_cache() {
-    let root = std::env::temp_dir().join(format!(
-      "fast-app-force-rescan-test-{}-{}",
-      std::process::id(),
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-    ));
+    let root = temporary_cache_root("force-rescan");
     let directory = root.join("workspace");
     let cache = DirectoryCache::new(root.join("cache"));
     std::fs::create_dir_all(&directory).unwrap();
@@ -1943,14 +2033,7 @@ mod tests {
 
   #[test]
   fn incomplete_scan_does_not_replace_the_cache() {
-    let root = std::env::temp_dir().join(format!(
-      "fast-app-incomplete-scan-test-{}-{}",
-      std::process::id(),
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-    ));
+    let root = temporary_cache_root("incomplete-scan");
     let directory = root.join("workspace");
     let cache = DirectoryCache::new(root.join("cache"));
     std::fs::create_dir_all(&directory).unwrap();
@@ -1985,14 +2068,7 @@ mod tests {
 
   #[test]
   fn does_not_persist_navigation_entries_in_the_cache() {
-    let root = std::env::temp_dir().join(format!(
-      "fast-app-navigation-cache-test-{}-{}",
-      std::process::id(),
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-    ));
+    let root = temporary_cache_root("navigation-cache");
     let directory = root.join("workspace");
     let cache = DirectoryCache::new(root.join("cache"));
     std::fs::create_dir_all(&directory).unwrap();
@@ -2037,14 +2113,7 @@ mod tests {
 
   #[test]
   fn file_visible_scan_does_not_write_to_the_directory_cache() {
-    let root = std::env::temp_dir().join(format!(
-      "fast-app-file-cache-test-{}-{}",
-      std::process::id(),
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-    ));
+    let root = temporary_cache_root("file-cache");
     let directory = root.join("workspace");
     let cache = DirectoryCache::new(root.join("cache"));
     std::fs::create_dir_all(&directory).unwrap();
@@ -2082,14 +2151,7 @@ mod tests {
 
   #[test]
   fn file_visible_scan_ignores_directory_cache() {
-    let root = std::env::temp_dir().join(format!(
-      "fast-app-file-cache-read-test-{}-{}",
-      std::process::id(),
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-    ));
+    let root = temporary_cache_root("file-cache-read");
     let directory = root.join("workspace");
     let child = directory.join("child");
     let cache = DirectoryCache::new(root.join("cache"));

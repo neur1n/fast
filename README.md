@@ -90,6 +90,16 @@
   </li>
   <li>
     <details>
+      <summary><strong>Clipboard path copy</strong></summary>
+      <p>
+        Press <code>y</code> to copy the highlighted logical path through OSC
+        52 without leaving the navigator. The terminal emulator or multiplexer
+        must permit OSC 52 clipboard commands.
+      </p>
+    </details>
+  </li>
+  <li>
+    <details>
       <summary><strong>Shell integration</strong></summary>
       <p>
         Bash, Zsh, and Nushell wrappers read the selected path and apply it
@@ -180,6 +190,9 @@ selection. `Esc` or `Ctrl-C` leaves the directory unchanged.
 - **Jump:** Use `Home`/`g` for the first entry or `End`/`G` for the last entry.
 - **Select:** Press `q` to select the highlighted directory; on a file, it
   selects the current directory instead.
+- **Copy path:** Press `y` in normal navigation mode to copy the highlighted
+  logical path through OSC 52. The terminal emulator or multiplexer must permit
+  OSC 52 clipboard commands.
 - **Cancel:** Press `Esc` to clear an active filter; press it again, or use
   `Ctrl-C`, to cancel without selecting a directory.
 - **Rescan:** Press `r` to bypass the cache and scan the current directory again.

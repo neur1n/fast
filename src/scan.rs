@@ -6,7 +6,7 @@ use std::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
   },
-  thread::{self, JoinHandle},
+  thread,
   time::{Duration, SystemTime},
 };
 
@@ -38,7 +38,6 @@ pub struct EntryMetadata {
 pub struct ScanHandle {
   receiver: Receiver<ScanEvent>,
   cancel: Arc<AtomicBool>,
-  worker: Option<JoinHandle<()>>,
 }
 
 impl ScanHandle {
@@ -46,30 +45,22 @@ impl ScanHandle {
     let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = Arc::clone(&cancel);
-    let worker = thread::Builder::new()
+    thread::Builder::new()
       .name("fast-directory-scan".to_owned())
       .spawn(move || scan_directory(path, sender, worker_cancel, include_files))?;
 
-    Ok(Self {
-      receiver,
-      cancel,
-      worker: Some(worker),
-    })
+    Ok(Self { receiver, cancel })
   }
 
   pub fn start_metadata(paths: Vec<PathBuf>) -> io::Result<Self> {
     let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = Arc::clone(&cancel);
-    let worker = thread::Builder::new()
+    thread::Builder::new()
       .name("fast-entry-metadata".to_owned())
       .spawn(move || refresh_metadata(paths, sender, worker_cancel))?;
 
-    Ok(Self {
-      receiver,
-      cancel,
-      worker: Some(worker),
-    })
+    Ok(Self { receiver, cancel })
   }
 
   pub fn try_recv(&self) -> Result<ScanEvent, TryRecvError> {
@@ -84,10 +75,6 @@ impl ScanHandle {
 impl Drop for ScanHandle {
   fn drop(&mut self) {
     self.cancel();
-    // Dropping the join handle keeps navigation responsive when a filesystem
-    // call is slow. The worker exits when its receiver is dropped or the flag
-    // is observed.
-    let _ = self.worker.take();
   }
 }
 
