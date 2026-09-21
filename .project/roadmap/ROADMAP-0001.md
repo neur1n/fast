@@ -43,6 +43,9 @@ system by default.
 - Filesystem scan and cache resilience for target version `0.0.9` is completed
   and accepted in `REVIEW-0013`; it preserves the accepted timestamp baseline
   and does not promote Phase 4 prefetch.
+- Terminal clipboard copy through OSC 52 is approved in `PLAN-0011` and
+  `DECISION-0012` for target version `0.0.10`; the implementation is completed
+  and accepted in `REVIEW-0014`.
 
 ## Phase
 
@@ -183,6 +186,19 @@ system by default.
   `c9201f402ad55500bc7de8a810aaf4406a4e411b`.
 - Dependency: phase-5-entry-modification-timestamps
 
+### Phase 7: Terminal Clipboard Copy
+
+- Objective: Copy the highlighted logical path to the terminal host clipboard
+  with a lowercase `y` shortcut without changing navigation or shell selection
+  behavior. Release the work as package version `0.0.10`.
+- Gate: OSC 52 emission, direct directory/file/navigation-entry path semantics,
+  filter-mode isolation, terminal-support documentation, regression coverage,
+  synchronized `0.0.10` package metadata, and locked dependency checks pass.
+- Status: Completed and accepted in `REVIEW-0014`; implementation commit
+  `cbcfef71e42f7c91f7479fd4ad34aa2908d2eb7f` has tree
+  `aac58992078b91623677bf3e05b4c307b503c7e5`.
+- Dependency: phase-6-filesystem-scan-and-cache-resilience
+
 ## Assumption
 
 - Rust is the proposed initial implementation language.
@@ -200,3 +216,6 @@ system by default.
 - Last-modified values use local time, describe each direct entry itself rather
   than recursive contents, and are refreshed per listing load rather than per
   redraw.
+- Clipboard copy uses OSC 52 through the terminal host; native clipboard APIs,
+  external clipboard executables, paste, and primary-selection support are out
+  of scope unless a separately reviewed workstream promotes them.
