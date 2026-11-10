@@ -1,20 +1,18 @@
+mod render;
+
 use std::{
   collections::HashMap,
   io::{self, Stdout, Write},
   path::{Path, PathBuf},
-  time::{Duration, SystemTime, UNIX_EPOCH},
+  time::{Duration, SystemTime},
 };
-use time::{OffsetDateTime, UtcOffset};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crossterm::{
   clipboard::CopyToClipboard,
-  cursor::MoveTo,
   event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-  execute, queue,
-  style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
-  terminal::{self, Clear, ClearType},
+  execute,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
   cache::{DirectoryCache, DirectoryFingerprint},
@@ -23,13 +21,6 @@ use crate::{
 };
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
-const MARKER_WIDTH: usize = 2;
-const TIMESTAMP_WIDTH: usize = 16;
-const TIMESTAMP_GAP: usize = 4;
-const MIN_NAME_WIDTH: usize = 4;
-const MAX_ENTRY_LINE_WIDTH: usize = 80;
-const TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
-  time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
 
 pub(crate) struct App {
   current_dir: PathBuf,
@@ -50,16 +41,16 @@ pub(crate) struct App {
 }
 
 enum ScanStatus {
-  Indexing,
-  Refreshing,
-  Ready,
   Error(String),
+  Indexing,
+  Ready,
+  Refreshing,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TimestampState {
-  Pending,
   Available(SystemTime),
+  Pending,
   Unavailable,
 }
 
@@ -76,13 +67,14 @@ struct SelectionState {
 }
 
 pub(crate) enum ExitAction {
-  Select(PathBuf),
   Cancel,
+  Select(PathBuf),
 }
 
 enum KeyAction {
-  Exit(ExitAction),
   Copy(PathBuf),
+  Exit(ExitAction),
+  Redraw,
 }
 
 impl App {
@@ -113,23 +105,50 @@ impl App {
   }
 
   pub(crate) fn run(&mut self, output: &mut Stdout) -> io::Result<ExitAction> {
-    let action = loop {
-      self.poll_scan_events();
-      self.draw(output)?;
-
-      if event::poll(EVENT_POLL_INTERVAL)?
-        && let Event::Key(key) = event::read()?
-      {
-        match self.handle_key(key) {
-          Some(KeyAction::Exit(action)) => break action,
-          Some(KeyAction::Copy(path)) => copy_path(output, &path)?,
-          None => {}
-        }
+    self.run_with(output, Self::draw, |scan_active| {
+      // The scan channel cannot wake a terminal read, so poll only while it is active.
+      if scan_active && !event::poll(EVENT_POLL_INTERVAL)? {
+        Ok(None)
+      } else {
+        event::read().map(Some)
       }
+    })
+  }
+
+  fn run_with<W: Write>(
+    &mut self,
+    output: &mut W,
+    mut draw: impl FnMut(&Self, &mut W) -> io::Result<()>,
+    mut next_event: impl FnMut(bool) -> io::Result<Option<Event>>,
+  ) -> io::Result<ExitAction> {
+    let mut redraw = true;
+    let action = loop {
+      redraw |= self.poll_scan_events();
+      if redraw {
+        draw(self, output)?;
+      }
+
+      redraw = match next_event(self.scan.is_some())?.and_then(|event| self.handle_event(event)) {
+        Some(KeyAction::Exit(action)) => break action,
+        Some(KeyAction::Copy(path)) => {
+          copy_path(output, &path)?;
+          false
+        }
+        Some(KeyAction::Redraw) => true,
+        None => false,
+      };
     };
 
     self.stop_scan();
     Ok(action)
+  }
+
+  fn handle_event(&mut self, event: Event) -> Option<KeyAction> {
+    match event {
+      Event::Key(key) => self.handle_key(key),
+      Event::Resize(_, _) => Some(KeyAction::Redraw),
+      _ => None,
+    }
   }
 
   fn handle_key(&mut self, key: KeyEvent) -> Option<KeyAction> {
@@ -150,50 +169,36 @@ impl App {
           Some(KeyAction::Exit(ExitAction::Cancel))
         } else {
           self.set_filter_query(String::new());
-          None
+          Some(KeyAction::Redraw)
         }
       }
       KeyCode::Char('/') => {
         self.filter_mode = true;
-        None
+        Some(KeyAction::Redraw)
       }
       KeyCode::Char('F') => {
         self.toggle_files();
-        None
+        Some(KeyAction::Redraw)
       }
       KeyCode::Char('q') | KeyCode::Char('Q') => self
         .selected_result_path()
         .map(|path| KeyAction::Exit(ExitAction::Select(path))),
       KeyCode::Char('y') => self.selected_path().map(KeyAction::Copy),
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.move_selection(-1);
-        None
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.move_selection(1);
-        None
-      }
-      KeyCode::Home | KeyCode::Char('g') => {
-        self.cancel_pending_selection();
-        self.selected = 0;
-        None
-      }
-      KeyCode::End | KeyCode::Char('G') => {
-        self.cancel_pending_selection();
-        self.selected = self.visible_indices.len().saturating_sub(1);
-        None
-      }
+      KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1).then_some(KeyAction::Redraw),
+      KeyCode::Down | KeyCode::Char('j') => self.move_selection(1).then_some(KeyAction::Redraw),
+      KeyCode::Home | KeyCode::Char('g') => self.select_index(0).then_some(KeyAction::Redraw),
+      KeyCode::End | KeyCode::Char('G') => self
+        .select_index(self.visible_indices.len().saturating_sub(1))
+        .then_some(KeyAction::Redraw),
       KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-        self.open_selected();
-        None
+        self.open_selected().then_some(KeyAction::Redraw)
       }
       KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => {
-        self.open_parent();
-        None
+        self.open_parent().then_some(KeyAction::Redraw)
       }
       KeyCode::Char('r') | KeyCode::Char('R') => {
         self.rescan();
-        None
+        Some(KeyAction::Redraw)
       }
       _ => None,
     }
@@ -204,43 +209,31 @@ impl App {
       KeyCode::Esc => {
         self.filter_mode = false;
         self.set_filter_query(String::new());
-        None
+        Some(KeyAction::Redraw)
       }
       KeyCode::Enter => {
         self.filter_mode = false;
-        None
+        Some(KeyAction::Redraw)
       }
       KeyCode::Tab => {
         let selected_path = self.selected_path();
         self.filter_kind = self.filter_kind.toggle();
         self.refresh_visible();
         self.restore_selection(selected_path.as_deref());
-        None
+        Some(KeyAction::Redraw)
       }
       KeyCode::Backspace => {
         let mut query = self.filter_query.clone();
-        query.pop();
+        let changed = query.pop().is_some();
         self.set_filter_query(query);
-        None
+        changed.then_some(KeyAction::Redraw)
       }
-      KeyCode::Up => {
-        self.move_selection(-1);
-        None
-      }
-      KeyCode::Down => {
-        self.move_selection(1);
-        None
-      }
-      KeyCode::Home => {
-        self.cancel_pending_selection();
-        self.selected = 0;
-        None
-      }
-      KeyCode::End => {
-        self.cancel_pending_selection();
-        self.selected = self.visible_indices.len().saturating_sub(1);
-        None
-      }
+      KeyCode::Up => self.move_selection(-1).then_some(KeyAction::Redraw),
+      KeyCode::Down => self.move_selection(1).then_some(KeyAction::Redraw),
+      KeyCode::Home => self.select_index(0).then_some(KeyAction::Redraw),
+      KeyCode::End => self
+        .select_index(self.visible_indices.len().saturating_sub(1))
+        .then_some(KeyAction::Redraw),
       KeyCode::Char(character)
         if !key
           .modifiers
@@ -249,13 +242,13 @@ impl App {
         let mut query = self.filter_query.clone();
         query.push(character);
         self.set_filter_query(query);
-        None
+        Some(KeyAction::Redraw)
       }
       _ => None,
     }
   }
 
-  fn poll_scan_events(&mut self) {
+  fn poll_scan_events(&mut self) -> bool {
     let mut events = Vec::new();
     let mut disconnected = false;
     if let Some(scan) = self.scan.as_ref() {
@@ -271,6 +264,7 @@ impl App {
       }
     }
 
+    let changed = !events.is_empty() || (disconnected && self.scan.is_some());
     for event in events {
       self.apply_scan_event(event);
     }
@@ -279,6 +273,7 @@ impl App {
       self.mark_pending_timestamps_unavailable();
       self.status = ScanStatus::Error("directory scanner stopped unexpectedly".to_owned());
     }
+    changed
   }
 
   fn apply_scan_event(&mut self, event: ScanEvent) {
@@ -449,12 +444,12 @@ impl App {
     self.start_scan(false);
   }
 
-  fn open_selected(&mut self) {
+  fn open_selected(&mut self) -> bool {
     let Some(entry) = self.selected_entry().cloned() else {
-      return;
+      return false;
     };
     if !entry.is_directory || entry.path == self.current_dir {
-      return;
+      return false;
     }
     let path = entry.path;
     let previous_dir = self.current_dir.clone();
@@ -470,14 +465,15 @@ impl App {
         .insert(self.current_dir.clone(), previous_dir);
     }
     self.start_scan(false);
+    true
   }
 
-  fn open_parent(&mut self) {
+  fn open_parent(&mut self) -> bool {
     let Some(parent) = self.current_dir.parent().map(Path::to_path_buf) else {
-      return;
+      return false;
     };
     if parent == self.current_dir.as_path() {
-      return;
+      return false;
     }
     let child = self.current_dir.clone();
     self.remember_selection();
@@ -487,6 +483,7 @@ impl App {
       .remembered
       .insert(self.current_dir.clone(), child);
     self.start_scan(false);
+    true
   }
 
   fn rescan(&mut self) {
@@ -494,13 +491,22 @@ impl App {
     self.start_scan(true);
   }
 
-  fn move_selection(&mut self, delta: isize) {
+  fn move_selection(&mut self, delta: isize) -> bool {
     self.cancel_pending_selection();
     if self.visible_indices.is_empty() {
-      return;
+      return false;
     }
+    let previous = self.selected;
     let last = self.visible_indices.len().saturating_sub(1) as isize;
     self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
+    self.selected != previous
+  }
+
+  fn select_index(&mut self, index: usize) -> bool {
+    self.cancel_pending_selection();
+    let previous = self.selected;
+    self.selected = index;
+    self.selected != previous
   }
 
   fn selected_path(&self) -> Option<PathBuf> {
@@ -569,33 +575,6 @@ impl App {
     });
   }
 
-  fn files_position(&self) -> Option<usize> {
-    if !self.show_files {
-      return None;
-    }
-    // Sorting and filtering keep directories before non-directory entries.
-    let position = self
-      .visible_indices
-      .partition_point(|&index| self.entries[index].is_directory);
-    self
-      .visible_indices
-      .get(position)
-      .is_some_and(|&index| !self.entries[index].is_directory)
-      .then_some(position)
-  }
-
-  fn selected_row(&self, files_position: Option<usize>) -> usize {
-    self.selected + usize::from(files_position.is_some_and(|position| position <= self.selected))
-  }
-
-  fn entry_color(entry: &DirectoryEntry) -> Color {
-    if entry.is_directory {
-      Color::White
-    } else {
-      Color::DarkGrey
-    }
-  }
-
   fn restore_selection(&mut self, previous_path: Option<&Path>) {
     if let Some(previous_path) = previous_path
       && let Some(index) = self
@@ -659,117 +638,6 @@ impl App {
       .min(self.visible_indices.len().saturating_sub(1));
   }
 
-  fn draw(&self, output: &mut Stdout) -> io::Result<()> {
-    let (width, height) = terminal::size()?;
-    let width = width as usize;
-    queue!(output, MoveTo(0, 0), Clear(ClearType::All))?;
-    put_line(
-      output,
-      0,
-      &format!(" FAST  {}", self.current_dir.display()),
-      width,
-      Color::Cyan,
-      false,
-    )?;
-    put_line(
-      output,
-      1,
-      &self.status_text(),
-      width,
-      Color::DarkGrey,
-      false,
-    )?;
-
-    let list_height = height.saturating_sub(3) as usize;
-    let files_position = self.files_position();
-    let name_column_width = self.name_column_width(width);
-    let selected_row = self.selected_row(files_position);
-    let scroll_start = self.scroll_start(list_height, selected_row);
-    for row in 0..list_height {
-      let row_index = scroll_start + row;
-      if files_position == Some(row_index) {
-        put_line(
-          output,
-          row as u16 + 2,
-          " -- Files --",
-          width,
-          Color::DarkGrey,
-          false,
-        )?;
-        continue;
-      }
-      let index = row_index.saturating_sub(usize::from(
-        files_position.is_some_and(|position| row_index > position),
-      ));
-      let Some(&entry_index) = self.visible_indices.get(index) else {
-        put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
-        continue;
-      };
-      let Some(entry) = self.entries.get(entry_index) else {
-        put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
-        continue;
-      };
-      let marker = if index == self.selected { "> " } else { "  " };
-      let timestamp = self.timestamp_text(entry);
-      let text = format_entry_line(marker, &entry.name, &timestamp, width, name_column_width);
-      put_line(
-        output,
-        row as u16 + 2,
-        &text,
-        width,
-        Self::entry_color(entry),
-        index == self.selected,
-      )?;
-    }
-
-    put_line(
-      output,
-      height.saturating_sub(1),
-      &self.footer_text(),
-      width,
-      Color::DarkGrey,
-      false,
-    )?;
-    output.flush()
-  }
-
-  fn status_text(&self) -> String {
-    let status = match &self.status {
-      ScanStatus::Indexing => {
-        format!(
-          " Indexing... {} {} discovered",
-          self.discovered_count(),
-          self.entry_label()
-        )
-      }
-      ScanStatus::Refreshing => {
-        format!(
-          " Refreshing timestamps... {} {}",
-          self.discovered_count(),
-          self.entry_label()
-        )
-      }
-      ScanStatus::Ready => format!(" Ready  {} {}", self.discovered_count(), self.entry_label()),
-      ScanStatus::Error(error) => format!(" Error  {error}"),
-    };
-    if self.filter_mode {
-      format!(
-        "{status}  Filter ({}): {}_",
-        self.filter_kind.label(),
-        self.filter_query
-      )
-    } else if self.filter_query.is_empty() {
-      status
-    } else {
-      format!(
-        "{status}  Filter ({}): {} ({} visible)",
-        self.filter_kind.label(),
-        self.filter_query,
-        self.visible_indices.len()
-      )
-    }
-  }
-
   fn parent_count(&self) -> usize {
     let Some(parent) = self.current_dir.parent() else {
       return 0;
@@ -799,67 +667,6 @@ impl App {
   fn discovered_count(&self) -> usize {
     self.entries.len().saturating_sub(self.navigation_count())
   }
-
-  fn footer_text(&self) -> String {
-    if self.filter_mode {
-      " Type to filter  Tab toggle mode  Backspace edit  Enter keep  Esc clear  Ctrl-C cancel"
-        .to_owned()
-    } else if self.filter_query.is_empty() {
-      format!(
-        " / filter  Up/Down or j/k  Enter/l open  F files {}  y copy path  Backspace/h parent  r rescan  q select  Esc cancel",
-        if self.show_files { "on" } else { "off" }
-      )
-    } else {
-      format!(
-        " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  F files {}  y copy path  Backspace/h parent  r rescan  q select  Esc clear",
-        if self.show_files { "on" } else { "off" }
-      )
-    }
-  }
-
-  fn entry_label(&self) -> &'static str {
-    if self.show_files {
-      "entries"
-    } else {
-      "directories"
-    }
-  }
-
-  fn scroll_start(&self, list_height: usize, selected_row: usize) -> usize {
-    if list_height == 0 {
-      return 0;
-    }
-    selected_row.saturating_sub(list_height.saturating_sub(1))
-  }
-
-  fn name_column_width(&self, width: usize) -> Option<usize> {
-    let available = width
-      .min(MAX_ENTRY_LINE_WIDTH)
-      .saturating_sub(MARKER_WIDTH + TIMESTAMP_GAP + TIMESTAMP_WIDTH);
-    (available >= MIN_NAME_WIDTH).then_some(
-      self
-        .max_visible_name_width
-        .max(MIN_NAME_WIDTH)
-        .min(available),
-    )
-  }
-
-  fn timestamp_text(&self, entry: &DirectoryEntry) -> String {
-    match self
-      .timestamps
-      .get(&entry.path)
-      .cloned()
-      .unwrap_or(match &self.status {
-        ScanStatus::Indexing | ScanStatus::Refreshing => TimestampState::Pending,
-        ScanStatus::Ready | ScanStatus::Error(_) => TimestampState::Unavailable,
-      }) {
-      TimestampState::Pending => "...".to_owned(),
-      TimestampState::Available(modified) => {
-        format_timestamp(modified).unwrap_or_else(|| "-".to_owned())
-      }
-      TimestampState::Unavailable => "-".to_owned(),
-    }
-  }
 }
 
 fn parent_entry(path: &Path) -> Option<DirectoryEntry> {
@@ -887,92 +694,6 @@ fn navigation_entries(path: &Path) -> Vec<DirectoryEntry> {
   entries
 }
 
-fn format_timestamp(modified: SystemTime) -> Option<String> {
-  let elapsed = modified.duration_since(UNIX_EPOCH).ok()?;
-  let timestamp = OffsetDateTime::from_unix_timestamp_nanos(elapsed.as_nanos() as i128).ok()?;
-  let offset = UtcOffset::local_offset_at(timestamp).ok()?;
-  let formatted = timestamp.to_offset(offset).format(TIMESTAMP_FORMAT).ok()?;
-  (UnicodeWidthStr::width(formatted.as_str()) == TIMESTAMP_WIDTH).then_some(formatted)
-}
-
-fn format_entry_line(
-  marker: &str,
-  name: &str,
-  timestamp: &str,
-  width: usize,
-  name_column_width: Option<usize>,
-) -> String {
-  let marker_width = UnicodeWidthStr::width(marker);
-  let Some(name_column_width) = name_column_width else {
-    return format!(
-      "{marker}{}",
-      truncate_with_ellipsis(name, width.saturating_sub(marker_width))
-    );
-  };
-  if width < marker_width + name_column_width + TIMESTAMP_GAP + TIMESTAMP_WIDTH {
-    return format!(
-      "{marker}{}",
-      truncate_with_ellipsis(name, width.saturating_sub(marker_width))
-    );
-  }
-
-  let name = truncate_with_ellipsis(name, name_column_width);
-  let name_padding = name_column_width.saturating_sub(UnicodeWidthStr::width(name.as_str()));
-  let name_padding = " ".repeat(name_padding);
-  let gap = " ".repeat(TIMESTAMP_GAP);
-  format!("{marker}{name}{name_padding}{gap}{timestamp}")
-}
-
-fn truncate_with_ellipsis(text: &str, width: usize) -> String {
-  if UnicodeWidthStr::width(text) <= width {
-    return text.to_owned();
-  }
-  if width <= 3 {
-    return take_display_width(text, width);
-  }
-  format!("{}...", take_display_width(text, width - 3))
-}
-
-fn take_display_width(text: &str, width: usize) -> String {
-  let mut result = String::new();
-  let mut used = 0;
-  for character in text.chars() {
-    let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-    if used + character_width > width {
-      break;
-    }
-    result.push(character);
-    used += character_width;
-  }
-  result
-}
-
-fn put_line<W: Write>(
-  output: &mut W,
-  row: u16,
-  text: &str,
-  width: usize,
-  color: Color,
-  selected: bool,
-) -> io::Result<()> {
-  let text = take_display_width(text, width);
-  queue!(
-    output,
-    MoveTo(0, row),
-    Clear(ClearType::UntilNewLine),
-    SetForegroundColor(color)
-  )?;
-  if selected {
-    queue!(output, SetAttribute(Attribute::Reverse))?;
-  }
-  queue!(
-    output,
-    Print(text),
-    SetAttribute(Attribute::Reset),
-    ResetColor
-  )
-}
-
 fn copy_path<W: Write>(output: &mut W, path: &Path) -> io::Result<()> {
   let Some(path) = path.to_str() else {
     return Ok(());
@@ -981,1218 +702,5 @@ fn copy_path<W: Write>(output: &mut W, path: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-
-  const TEST_NARROW_LINE_WIDTH: usize = 32;
-  const TEST_WIDE_LINE_WIDTH: usize = 80;
-  const TEST_NARROW_NAME_COLUMN_WIDTH: usize = 10;
-  const TEST_WIDE_NAME_COLUMN_WIDTH: usize = 24;
-  const TEST_TINY_LINE_WIDTH: usize = 20;
-
-  fn app_with_entries(current_dir: PathBuf, entries: Vec<DirectoryEntry>, selected: usize) -> App {
-    let visible_indices = (0..entries.len()).collect();
-    App {
-      current_dir,
-      show_files: false,
-      entries,
-      visible_indices,
-      selected,
-      filter_query: String::new(),
-      filter_kind: FilterKind::default(),
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    }
-  }
-
-  fn finish_scan(app: &mut App) {
-    while app.scan.is_some() {
-      app.poll_scan_events();
-      std::thread::yield_now();
-    }
-  }
-
-  fn temporary_cache_root(label: &str) -> PathBuf {
-    let suffix = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .unwrap()
-      .as_nanos();
-    std::env::temp_dir().join(format!("fast-app-{label}-{}-{suffix}", std::process::id()))
-  }
-
-  #[test]
-  fn formats_local_timestamps_with_fixed_width() {
-    let timestamp = format_timestamp(SystemTime::now()).expect("current time should format");
-
-    assert_eq!(timestamp.len(), TIMESTAMP_WIDTH);
-    assert_eq!(&timestamp[4..5], "-");
-    assert_eq!(&timestamp[7..8], "-");
-    assert_eq!(&timestamp[10..11], " ");
-    assert_eq!(&timestamp[13..14], ":");
-  }
-
-  #[test]
-  fn entry_layout_truncates_names_without_mutating_the_source() {
-    let name = "a-very-long-entry-name";
-    let timestamp = "2026-09-16 12:34";
-
-    let narrow = format_entry_line(
-      "> ",
-      name,
-      timestamp,
-      TEST_NARROW_LINE_WIDTH,
-      Some(TEST_NARROW_NAME_COLUMN_WIDTH),
-    );
-    assert!(narrow.contains("..."));
-    assert!(narrow.ends_with(timestamp));
-    assert!(UnicodeWidthStr::width(narrow.as_str()) <= TEST_NARROW_LINE_WIDTH);
-
-    let wide = format_entry_line(
-      "  ",
-      name,
-      timestamp,
-      TEST_WIDE_LINE_WIDTH,
-      Some(TEST_WIDE_NAME_COLUMN_WIDTH),
-    );
-    assert!(wide.contains(name));
-    assert!(wide.ends_with(timestamp));
-
-    let too_narrow = format_entry_line("  ", name, timestamp, TEST_TINY_LINE_WIDTH, None);
-    assert!(!too_narrow.contains(timestamp));
-    assert!(too_narrow.contains("..."));
-
-    let wide_name = format_entry_line(
-      "  ",
-      "wide-directory-name",
-      timestamp,
-      TEST_NARROW_LINE_WIDTH,
-      Some(TEST_NARROW_NAME_COLUMN_WIDTH),
-    );
-    assert!(wide_name.ends_with(timestamp));
-    assert!(UnicodeWidthStr::width(wide_name.as_str()) <= TEST_NARROW_LINE_WIDTH);
-
-    let short = format_entry_line("  ", "src", timestamp, TEST_WIDE_LINE_WIDTH, Some(12));
-    let medium = format_entry_line(
-      "  ",
-      "Cargo.toml",
-      timestamp,
-      TEST_WIDE_LINE_WIDTH,
-      Some(12),
-    );
-    assert_eq!(short.find(timestamp), medium.find(timestamp));
-  }
-
-  #[test]
-  fn name_column_uses_the_total_line_width_limit() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(
-      current_dir.clone(),
-      vec![DirectoryEntry {
-        name: "this-entry-name-is-deliberately-longer-than-fifty-eight-cells".to_owned(),
-        path: current_dir.join("long-entry"),
-        is_directory: true,
-      }],
-      0,
-    );
-    app.refresh_visible();
-
-    assert_eq!(app.name_column_width(MAX_ENTRY_LINE_WIDTH), Some(58));
-    assert_eq!(app.name_column_width(120), Some(58));
-    assert_eq!(app.name_column_width(70), Some(48));
-    assert_eq!(app.name_column_width(25), None);
-  }
-
-  #[test]
-  fn metadata_updates_replace_pending_state_by_path() {
-    let path = PathBuf::from("/tmp/current/entry");
-    let mut app = app_with_entries(
-      PathBuf::from("/tmp/current"),
-      vec![DirectoryEntry {
-        name: "entry".to_owned(),
-        path: path.clone(),
-        is_directory: true,
-      }],
-      0,
-    );
-    app.status = ScanStatus::Refreshing;
-    app.timestamps.insert(path.clone(), TimestampState::Pending);
-
-    app.apply_scan_event(ScanEvent::MetadataChunk(vec![EntryMetadata {
-      path: path.clone(),
-      modified: Some(UNIX_EPOCH),
-    }]));
-
-    assert!(matches!(
-      app.timestamps.get(&path),
-      Some(TimestampState::Available(modified)) if *modified == UNIX_EPOCH
-    ));
-  }
-
-  #[test]
-  fn copy_path_emits_an_osc52_clipboard_command() {
-    let mut output = Vec::new();
-
-    copy_path(&mut output, Path::new("/tmp/current/target")).unwrap();
-
-    assert_eq!(output, b"\x1b]52;c;L3RtcC9jdXJyZW50L3RhcmdldA==\x1b\\");
-  }
-
-  #[cfg(unix)]
-  #[test]
-  fn copy_path_ignores_a_non_utf8_path() {
-    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-
-    let path = PathBuf::from(OsString::from_vec(vec![b'/', 0xff]));
-    let mut output = Vec::new();
-
-    copy_path(&mut output, &path).unwrap();
-
-    assert!(output.is_empty());
-  }
-
-  #[test]
-  fn y_copies_the_highlighted_file_path_without_exiting() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let file_path = current_dir.join("file.txt");
-    let mut app = app_with_entries(
-      current_dir,
-      vec![DirectoryEntry {
-        name: "file.txt".to_owned(),
-        path: file_path.clone(),
-        is_directory: false,
-      }],
-      0,
-    );
-    app.show_files = true;
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-
-    assert!(matches!(action, Some(KeyAction::Copy(path)) if path == file_path));
-  }
-
-  #[test]
-  fn y_copies_navigation_entry_paths() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    let parent = current_dir.parent().unwrap().to_path_buf();
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    assert!(matches!(action, Some(KeyAction::Copy(path)) if path == parent));
-
-    app.selected = 1;
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    assert!(matches!(action, Some(KeyAction::Copy(path)) if path == current_dir));
-  }
-
-  #[test]
-  fn y_in_filter_mode_remains_query_input() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(
-      current_dir.clone(),
-      vec![DirectoryEntry {
-        name: "target".to_owned(),
-        path: current_dir.join("target"),
-        is_directory: true,
-      }],
-      0,
-    );
-    app.filter_mode = true;
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-
-    assert!(action.is_none());
-    assert_eq!(app.filter_query, "y");
-  }
-
-  #[test]
-  fn y_does_nothing_without_a_highlighted_entry() {
-    let mut app = app_with_entries(PathBuf::from("/tmp/current"), Vec::new(), 0);
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-
-    assert!(action.is_none());
-  }
-
-  #[test]
-  fn q_selects_the_highlighted_entry() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let selected_path = current_dir.join("target");
-    let mut app = App {
-      current_dir,
-      show_files: false,
-      entries: vec![DirectoryEntry {
-        name: "target".to_owned(),
-        path: selected_path.clone(),
-        is_directory: true,
-      }],
-      visible_indices: vec![0],
-      selected: 0,
-      filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-    match action {
-      Some(KeyAction::Exit(ExitAction::Select(path))) => assert_eq!(path, selected_path),
-      _ => panic!("q should select the highlighted entry"),
-    }
-  }
-
-  #[test]
-  fn q_on_a_file_selects_the_current_directory() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(
-      current_dir.clone(),
-      vec![DirectoryEntry {
-        name: "file.txt".to_owned(),
-        path: current_dir.join("file.txt"),
-        is_directory: false,
-      }],
-      0,
-    );
-    app.show_files = true;
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-
-    assert!(matches!(
-      action,
-      Some(KeyAction::Exit(ExitAction::Select(path))) if path == current_dir
-    ));
-  }
-
-  #[test]
-  fn opening_a_file_with_enter_right_or_l_is_a_no_op() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(
-      current_dir.clone(),
-      vec![DirectoryEntry {
-        name: "file.txt".to_owned(),
-        path: current_dir.join("file.txt"),
-        is_directory: false,
-      }],
-      0,
-    );
-    app.show_files = true;
-
-    for key_code in [KeyCode::Enter, KeyCode::Right, KeyCode::Char('l')] {
-      app.handle_key(KeyEvent::new(key_code, KeyModifiers::NONE));
-      assert_eq!(app.current_dir, current_dir);
-      assert!(app.scan.is_none());
-      assert!(matches!(app.status, ScanStatus::Ready));
-    }
-  }
-
-  #[test]
-  fn uppercase_f_replaces_the_active_listing_mode() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir, Vec::new(), 0);
-
-    app.handle_key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
-    assert!(app.show_files);
-    assert!(matches!(app.status, ScanStatus::Indexing));
-    app.stop_scan();
-
-    app.handle_key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
-    assert!(!app.show_files);
-    assert!(matches!(app.status, ScanStatus::Indexing));
-    app.stop_scan();
-  }
-
-  #[test]
-  fn h_remains_the_parent_navigation_shortcut() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir, Vec::new(), 0);
-
-    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
-
-    assert_eq!(app.current_dir, PathBuf::from("/tmp"));
-    app.stop_scan();
-  }
-
-  #[test]
-  fn mixed_listings_without_history_default_to_the_current_directory() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-    app.show_files = true;
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![
-      DirectoryEntry {
-        name: "a-file".to_owned(),
-        path: current_dir.join("a-file"),
-        is_directory: false,
-      },
-      DirectoryEntry {
-        name: "z-directory".to_owned(),
-        path: current_dir.join("z-directory"),
-        is_directory: true,
-      },
-    ]));
-
-    assert_eq!(app.selected_path(), Some(current_dir));
-  }
-
-  #[test]
-  fn directories_are_sorted_before_files_and_files_get_a_header_row() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut entries = navigation_entries(&current_dir);
-    entries.extend([
-      DirectoryEntry {
-        name: "z-file".to_owned(),
-        path: current_dir.join("z-file"),
-        is_directory: false,
-      },
-      DirectoryEntry {
-        name: "a-directory".to_owned(),
-        path: current_dir.join("a-directory"),
-        is_directory: true,
-      },
-    ]);
-    let mut app = app_with_entries(current_dir, entries, 0);
-    app.show_files = true;
-    app.sort_entries();
-    app.refresh_visible();
-
-    let names = app
-      .visible_indices
-      .iter()
-      .map(|&index| app.entries[index].name.as_str())
-      .collect::<Vec<_>>();
-    assert_eq!(names, vec!["..", ".", "a-directory", "z-file"]);
-    assert_eq!(app.files_position(), Some(3));
-    assert_eq!(app.selected_row(app.files_position()), 0);
-
-    app.selected = 3;
-    assert_eq!(app.selected_row(app.files_position()), 4);
-    assert_eq!(
-      app.scroll_start(3, app.selected_row(app.files_position())),
-      2
-    );
-    assert_eq!(App::entry_color(&app.entries[3]), Color::DarkGrey);
-    assert_eq!(App::entry_color(&app.entries[2]), Color::White);
-  }
-
-  #[test]
-  fn file_only_listings_default_to_the_current_directory() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-    app.show_files = true;
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "file.txt".to_owned(),
-      path: current_dir.join("file.txt"),
-      is_directory: false,
-    }]));
-    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
-
-    assert_eq!(app.selected_path(), Some(current_dir));
-  }
-
-  #[test]
-  fn navigation_entries_include_the_current_directory() {
-    let current_dir = PathBuf::from("/tmp/current");
-
-    assert_eq!(
-      navigation_entries(&current_dir),
-      vec![
-        DirectoryEntry {
-          name: "..".to_owned(),
-          path: PathBuf::from("/tmp"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: ".".to_owned(),
-          path: current_dir,
-          is_directory: true,
-        },
-      ]
-    );
-  }
-
-  #[test]
-  fn root_navigation_entries_only_include_the_current_directory() {
-    let entries = navigation_entries(Path::new("/"));
-
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].name, ".");
-    assert_eq!(entries[0].path, PathBuf::from("/"));
-  }
-
-  #[test]
-  fn q_can_select_the_current_directory() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = App {
-      current_dir: current_dir.clone(),
-      show_files: false,
-      entries: navigation_entries(&current_dir),
-      visible_indices: vec![0, 1],
-      selected: 1,
-      filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-
-    let action = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-
-    assert!(matches!(
-      action,
-      Some(KeyAction::Exit(ExitAction::Select(path))) if path == current_dir
-    ));
-  }
-
-  #[test]
-  fn opening_the_current_directory_is_a_no_op() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = App {
-      current_dir: current_dir.clone(),
-      show_files: false,
-      entries: navigation_entries(&current_dir),
-      visible_indices: vec![0, 1],
-      selected: 1,
-      filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-
-    app.open_selected();
-
-    assert_eq!(app.current_dir, current_dir);
-    assert!(app.scan.is_none());
-    assert!(matches!(app.status, ScanStatus::Ready));
-  }
-
-  #[test]
-  fn filter_input_updates_visible_entries() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = App {
-      current_dir: current_dir.clone(),
-      show_files: false,
-      entries: vec![
-        DirectoryEntry {
-          name: "..".to_owned(),
-          path: PathBuf::from("/tmp"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: ".".to_owned(),
-          path: current_dir.clone(),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: "Target".to_owned(),
-          path: current_dir.join("Target"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: "logs".to_owned(),
-          path: current_dir.join("logs"),
-          is_directory: true,
-        },
-      ],
-      visible_indices: Vec::new(),
-      selected: 0,
-      filter_query: String::new(),
-      filter_kind: FilterKind::default(),
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-    app.refresh_visible();
-
-    app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
-
-    let visible_names = app
-      .visible_indices
-      .iter()
-      .map(|&index| app.entries[index].name.as_str())
-      .collect::<Vec<_>>();
-    assert!(app.filter_mode);
-    assert_eq!(app.filter_query, "t");
-    assert_eq!(visible_names, vec!["..", ".", "Target"]);
-  }
-
-  #[test]
-  fn empty_results_cannot_select_the_current_directory() {
-    let mut app = App {
-      current_dir: PathBuf::from("/"),
-      show_files: false,
-      entries: vec![DirectoryEntry {
-        name: "target".to_owned(),
-        path: PathBuf::from("/target"),
-        is_directory: true,
-      }],
-      visible_indices: Vec::new(),
-      selected: 0,
-      filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-    app.refresh_visible();
-    app.set_filter_query("missing".to_owned());
-
-    assert!(app.visible_indices.is_empty());
-    assert!(
-      app
-        .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
-        .is_none()
-    );
-  }
-
-  #[test]
-  fn filter_update_preserves_the_selected_path() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let selected_path = current_dir.join("logs");
-    let mut app = App {
-      current_dir: current_dir.clone(),
-      show_files: false,
-      entries: vec![
-        DirectoryEntry {
-          name: "target".to_owned(),
-          path: current_dir.join("target"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: "logs".to_owned(),
-          path: selected_path.clone(),
-          is_directory: true,
-        },
-      ],
-      visible_indices: Vec::new(),
-      selected: 1,
-      filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-    app.refresh_visible();
-    app.set_filter_query("log".to_owned());
-
-    assert_eq!(app.selected_path(), Some(selected_path));
-    assert_eq!(app.selected, 0);
-  }
-
-  #[test]
-  fn filter_keys_edit_and_clear_the_query() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = App {
-      current_dir: current_dir.clone(),
-      show_files: false,
-      entries: vec![
-        DirectoryEntry {
-          name: "target".to_owned(),
-          path: current_dir.join("target"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: "logs".to_owned(),
-          path: current_dir.join("logs"),
-          is_directory: true,
-        },
-      ],
-      visible_indices: Vec::new(),
-      selected: 0,
-      filter_query: String::new(),
-      filter_kind: FilterKind::default(),
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-    app.refresh_visible();
-
-    app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-
-    assert!(app.filter_mode);
-    assert_eq!(app.filter_query, "T");
-    assert_eq!(app.filter_kind, FilterKind::Substring);
-    assert_eq!(app.visible_indices, vec![0]);
-    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(!app.filter_mode);
-    assert_eq!(app.filter_query, "T");
-
-    assert!(
-      app
-        .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-        .is_none()
-    );
-    assert!(app.filter_query.is_empty());
-    assert!(matches!(
-      app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-      Some(KeyAction::Exit(ExitAction::Cancel))
-    ));
-  }
-
-  #[test]
-  fn scan_chunks_keep_unfiltered_entries_and_selected_path() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let selected_path = current_dir.join("alpha");
-    let mut app = App {
-      current_dir: current_dir.clone(),
-      show_files: false,
-      entries: vec![
-        DirectoryEntry {
-          name: "..".to_owned(),
-          path: PathBuf::from("/tmp"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: ".".to_owned(),
-          path: current_dir.clone(),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: "alpha".to_owned(),
-          path: selected_path.clone(),
-          is_directory: true,
-        },
-      ],
-      visible_indices: Vec::new(),
-      selected: 2,
-      filter_query: "a".to_owned(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: None,
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Indexing,
-    };
-    app.refresh_visible();
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "beta".to_owned(),
-      path: current_dir.join("beta"),
-      is_directory: true,
-    }]));
-
-    assert_eq!(app.entries.len(), 4);
-    assert_eq!(app.visible_indices, vec![0, 1, 2, 3]);
-    assert_eq!(app.selected_path(), Some(selected_path));
-  }
-
-  #[test]
-  fn unvisited_directory_stays_on_the_current_directory_as_scan_chunks_arrive() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![
-      DirectoryEntry {
-        name: "beta".to_owned(),
-        path: current_dir.join("beta"),
-        is_directory: true,
-      },
-      DirectoryEntry {
-        name: "alpha".to_owned(),
-        path: current_dir.join("alpha"),
-        is_directory: true,
-      },
-    ]));
-
-    assert_eq!(app.selected_path(), Some(current_dir.clone()));
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "gamma".to_owned(),
-      path: current_dir.join("gamma"),
-      is_directory: true,
-    }]));
-    assert_eq!(app.selected_path(), Some(current_dir.clone()));
-    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
-    assert_eq!(app.selected_path(), Some(current_dir));
-    assert!(app.selection.pending.is_none());
-  }
-
-  #[test]
-  fn root_directory_defaults_to_the_current_directory() {
-    let current_dir = PathBuf::from("/");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "alpha".to_owned(),
-      path: current_dir.join("alpha"),
-      is_directory: true,
-    }]));
-
-    assert_eq!(app.selected_path(), Some(current_dir));
-  }
-
-  #[test]
-  fn empty_directory_keeps_the_current_directory_selected() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
-    assert_eq!(app.selected_path(), Some(current_dir.clone()));
-
-    let root = PathBuf::from("/");
-    let mut app = app_with_entries(root.clone(), navigation_entries(&root), 0);
-    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
-    assert_eq!(app.selected_path(), Some(root));
-  }
-
-  #[test]
-  fn manual_selection_movement_overrides_pending_restoration() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    app.selection.pending = Some(current_dir.join("alpha"));
-
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "alpha".to_owned(),
-      path: current_dir.join("alpha"),
-      is_directory: true,
-    }]));
-
-    assert_eq!(app.selected_path(), Some(current_dir));
-    assert!(app.selection.pending.is_none());
-  }
-
-  #[test]
-  fn manual_home_and_end_override_pending_restoration() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 1);
-    app.selection.pending = Some(current_dir.join("alpha"));
-    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "alpha".to_owned(),
-      path: current_dir.join("alpha"),
-      is_directory: true,
-    }]));
-    assert_eq!(app.selected_path(), Some(PathBuf::from("/tmp")));
-
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    app.selection.pending = Some(current_dir.join("alpha"));
-    app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "alpha".to_owned(),
-      path: current_dir.join("alpha"),
-      is_directory: true,
-    }]));
-    assert_eq!(app.selected_path(), Some(current_dir));
-  }
-
-  #[test]
-  fn returning_to_parent_restores_the_child_entry() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let child = current_dir.join("child");
-    let mut app = app_with_entries(
-      current_dir.clone(),
-      vec![
-        DirectoryEntry {
-          name: "..".to_owned(),
-          path: PathBuf::from("/tmp"),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: ".".to_owned(),
-          path: current_dir.clone(),
-          is_directory: true,
-        },
-        DirectoryEntry {
-          name: "child".to_owned(),
-          path: child.clone(),
-          is_directory: true,
-        },
-      ],
-      2,
-    );
-
-    app.open_selected();
-    assert_eq!(app.current_dir, child);
-    assert_eq!(app.selected_path(), Some(child.clone()));
-    app.stop_scan();
-
-    app.open_parent();
-    app.stop_scan();
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "child".to_owned(),
-      path: child.clone(),
-      is_directory: true,
-    }]));
-
-    assert_eq!(app.selected_path(), Some(child));
-  }
-
-  #[test]
-  fn chunked_scan_restores_remembered_selection_when_entry_arrives() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let selected_path = current_dir.join("target");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    app
-      .selection
-      .remembered
-      .insert(current_dir.clone(), selected_path.clone());
-    app.start_scan(false);
-    app.stop_scan();
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "other".to_owned(),
-      path: PathBuf::from("/tmp/current/other"),
-      is_directory: true,
-    }]));
-    assert_eq!(app.selected_path(), Some(current_dir.clone()));
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "target".to_owned(),
-      path: selected_path.clone(),
-      is_directory: true,
-    }]));
-    assert_eq!(app.selected_path(), Some(selected_path));
-  }
-
-  #[test]
-  fn missing_remembered_selection_falls_back_to_the_current_directory() {
-    let current_dir = PathBuf::from("/tmp/current");
-    let mut app = app_with_entries(current_dir.clone(), navigation_entries(&current_dir), 0);
-    app
-      .selection
-      .remembered
-      .insert(current_dir.clone(), current_dir.join("missing"));
-    app.start_scan(false);
-    app.stop_scan();
-
-    app.apply_scan_event(ScanEvent::Chunk(vec![DirectoryEntry {
-      name: "other".to_owned(),
-      path: current_dir.join("other"),
-      is_directory: true,
-    }]));
-    app.apply_scan_event(ScanEvent::Finished { cacheable: true });
-
-    assert_eq!(app.selected_path(), Some(current_dir));
-    assert!(app.selected < app.visible_indices.len());
-  }
-
-  #[test]
-  fn uses_a_valid_cache_before_starting_a_scan() {
-    let root = temporary_cache_root("cache");
-    let directory = root.join("workspace");
-    let cache = DirectoryCache::new(root.join("cache"));
-    std::fs::create_dir_all(&directory).unwrap();
-    let child = directory.join("child");
-    std::fs::create_dir(&child).unwrap();
-    let entries = vec![DirectoryEntry {
-      name: "child".to_owned(),
-      path: child.clone(),
-      is_directory: true,
-    }];
-    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
-    assert!(
-      cache
-        .store_if_unchanged(&directory, &fingerprint, &entries)
-        .unwrap()
-    );
-
-    let mut app = App::with_cache(directory.clone(), Some(cache));
-
-    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
-    assert!(matches!(app.status, ScanStatus::Refreshing));
-    assert!(app.scan.is_some());
-    assert_eq!(app.entries[0].name, "..");
-    assert_eq!(app.entries[1].name, ".");
-    assert_eq!(app.selected_path(), Some(directory.clone()));
-    assert_eq!(app.discovered_count(), 1);
-    assert_eq!(
-      app
-        .entries
-        .iter()
-        .filter(|entry| entry.name == "child")
-        .count(),
-      1
-    );
-    assert!(matches!(
-      app.timestamps.get(&child),
-      Some(TimestampState::Pending)
-    ));
-
-    finish_scan(&mut app);
-    assert!(matches!(app.status, ScanStatus::Ready));
-    assert!(matches!(
-      app.timestamps.get(&child),
-      Some(TimestampState::Available(_))
-    ));
-
-    app.selected = app
-      .visible_indices
-      .iter()
-      .position(|&index| app.entries[index].path == child)
-      .unwrap();
-    app.remember_selection();
-    app.start_scan(false);
-    finish_scan(&mut app);
-
-    assert_eq!(app.selected_path(), Some(child.clone()));
-
-    app.filter_kind = FilterKind::Substring;
-    app.filter_query = "child".to_owned();
-    app.start_scan(false);
-    finish_scan(&mut app);
-
-    assert_eq!(app.filter_kind, FilterKind::Fuzzy);
-    assert!(app.filter_query.is_empty());
-    let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn rescan_bypasses_a_valid_cache() {
-    let root = temporary_cache_root("force-rescan");
-    let directory = root.join("workspace");
-    let cache = DirectoryCache::new(root.join("cache"));
-    std::fs::create_dir_all(&directory).unwrap();
-    let fresh = directory.join("fresh");
-    std::fs::create_dir(&fresh).unwrap();
-    let stale = directory.join("stale");
-    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
-    assert!(
-      cache
-        .store_if_unchanged(
-          &directory,
-          &fingerprint,
-          &[DirectoryEntry {
-            name: "stale".to_owned(),
-            path: stale,
-            is_directory: true,
-          }],
-        )
-        .unwrap()
-    );
-
-    let mut app = App::with_cache(directory.clone(), Some(cache.clone()));
-    assert!(app.entries.iter().any(|entry| entry.name == "stale"));
-
-    app.rescan();
-    assert!(matches!(app.status, ScanStatus::Indexing));
-    finish_scan(&mut app);
-
-    assert!(app.entries.iter().any(|entry| entry.path == fresh));
-    assert!(!app.entries.iter().any(|entry| entry.name == "stale"));
-    assert_eq!(
-      cache.load(&directory).unwrap(),
-      Some(vec![DirectoryEntry {
-        name: "fresh".to_owned(),
-        path: fresh,
-        is_directory: true,
-      }])
-    );
-    let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn incomplete_scan_does_not_replace_the_cache() {
-    let root = temporary_cache_root("incomplete-scan");
-    let directory = root.join("workspace");
-    let cache = DirectoryCache::new(root.join("cache"));
-    std::fs::create_dir_all(&directory).unwrap();
-    let cached_path = directory.join("cached");
-    std::fs::create_dir(&cached_path).unwrap();
-    let cached_entries = vec![DirectoryEntry {
-      name: "cached".to_owned(),
-      path: cached_path,
-      is_directory: true,
-    }];
-    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
-    assert!(
-      cache
-        .store_if_unchanged(&directory, &fingerprint, &cached_entries)
-        .unwrap()
-    );
-
-    let mut app = App::with_cache(directory.clone(), Some(cache.clone()));
-    app.stop_scan();
-    app.entries = navigation_entries(&directory);
-    app.entries.push(DirectoryEntry {
-      name: "replacement".to_owned(),
-      path: directory.join("replacement"),
-      is_directory: true,
-    });
-    app.scan_fingerprint = Some(fingerprint);
-    app.persist_scan(false);
-
-    assert_eq!(cache.load(&directory).unwrap(), Some(cached_entries));
-    let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn does_not_persist_navigation_entries_in_the_cache() {
-    let root = temporary_cache_root("navigation-cache");
-    let directory = root.join("workspace");
-    let cache = DirectoryCache::new(root.join("cache"));
-    std::fs::create_dir_all(&directory).unwrap();
-    let child = directory.join("child");
-    std::fs::create_dir(&child).unwrap();
-    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
-    let mut app = App {
-      current_dir: directory.clone(),
-      show_files: false,
-      entries: navigation_entries(&directory),
-      visible_indices: Vec::new(),
-      selected: 0,
-      filter_query: String::new(),
-      filter_kind: FilterKind::Substring,
-      filter_mode: false,
-      cache: Some(cache.clone()),
-      scan: None,
-      scan_fingerprint: Some(fingerprint),
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-    app.entries.push(DirectoryEntry {
-      name: "child".to_owned(),
-      path: child.clone(),
-      is_directory: true,
-    });
-
-    app.persist_scan(true);
-
-    assert_eq!(
-      cache.load(&directory).unwrap(),
-      Some(vec![DirectoryEntry {
-        name: "child".to_owned(),
-        path: child,
-        is_directory: true,
-      }])
-    );
-    let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn file_visible_scan_does_not_write_to_the_directory_cache() {
-    let root = temporary_cache_root("file-cache");
-    let directory = root.join("workspace");
-    let cache = DirectoryCache::new(root.join("cache"));
-    std::fs::create_dir_all(&directory).unwrap();
-    let file = directory.join("file.txt");
-    std::fs::write(&file, b"content").unwrap();
-    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
-    let mut app = App {
-      current_dir: directory.clone(),
-      show_files: true,
-      entries: navigation_entries(&directory),
-      visible_indices: vec![0, 1],
-      selected: 1,
-      filter_query: String::new(),
-      filter_kind: FilterKind::default(),
-      filter_mode: false,
-      cache: Some(cache.clone()),
-      scan: None,
-      scan_fingerprint: Some(fingerprint),
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-    app.entries.push(DirectoryEntry {
-      name: "file.txt".to_owned(),
-      path: file,
-      is_directory: false,
-    });
-
-    app.persist_scan(true);
-
-    assert_eq!(cache.load(&directory).unwrap(), None);
-    let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn file_visible_scan_ignores_directory_cache() {
-    let root = temporary_cache_root("file-cache-read");
-    let directory = root.join("workspace");
-    let child = directory.join("child");
-    let cache = DirectoryCache::new(root.join("cache"));
-    std::fs::create_dir_all(&child).unwrap();
-    let fingerprint = DirectoryCache::fingerprint(&directory).unwrap();
-    assert!(
-      cache
-        .store_if_unchanged(
-          &directory,
-          &fingerprint,
-          &[DirectoryEntry {
-            name: "child".to_owned(),
-            path: child,
-            is_directory: true,
-          }],
-        )
-        .unwrap()
-    );
-
-    let mut app = App {
-      current_dir: directory.clone(),
-      show_files: true,
-      entries: navigation_entries(&directory),
-      visible_indices: vec![0, 1],
-      selected: 1,
-      filter_query: String::new(),
-      filter_kind: FilterKind::default(),
-      filter_mode: false,
-      cache: Some(cache),
-      scan: None,
-      scan_fingerprint: None,
-      timestamps: HashMap::new(),
-      max_visible_name_width: 0,
-      selection: SelectionState::default(),
-      status: ScanStatus::Ready,
-    };
-
-    app.start_scan(false);
-
-    assert!(app.scan.is_some());
-    app.stop_scan();
-    let _ = std::fs::remove_dir_all(root);
-  }
-}
+#[path = "../test/app.rs"]
+mod tests;
