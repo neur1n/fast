@@ -2,7 +2,9 @@ use std::time::UNIX_EPOCH;
 
 use crossterm::style::Color;
 
-use super::render::{MAX_ENTRY_LINE_WIDTH, TIMESTAMP_WIDTH, format_entry_line, format_timestamp};
+use super::render::{
+  MAX_ENTRY_LINE_WIDTH, TIMESTAMP_WIDTH, format_entry_line, format_timestamp, synchronized_frame,
+};
 use super::*;
 
 const TEST_NARROW_LINE_WIDTH: usize = 32;
@@ -11,7 +13,11 @@ const TEST_NARROW_NAME_COLUMN_WIDTH: usize = 10;
 const TEST_WIDE_NAME_COLUMN_WIDTH: usize = 24;
 const TEST_TINY_LINE_WIDTH: usize = 20;
 
-fn app_with_entries(current_dir: PathBuf, entries: Vec<DirectoryEntry>, selected: usize) -> App {
+pub(super) fn app_with_entries(
+  current_dir: PathBuf,
+  entries: Vec<DirectoryEntry>,
+  selected: usize,
+) -> App {
   let visible_indices = (0..entries.len()).collect();
   App {
     current_dir,
@@ -84,6 +90,122 @@ fn idle_loop_redraws_only_for_display_changes() {
   assert!(matches!(action, ExitAction::Cancel));
   assert_eq!(frames, vec![0, 1, 1]);
   assert!(scan_active.iter().all(|active| !active));
+}
+
+#[derive(Default)]
+struct FrameOutput {
+  bytes: Vec<u8>,
+  writes: Vec<usize>,
+  flushed_at: Vec<usize>,
+  fail_write: bool,
+  fail_flush: bool,
+}
+
+impl Write for FrameOutput {
+  fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+    self.writes.push(bytes.len());
+    if self.fail_write {
+      return Err(io::Error::other("frame write failed"));
+    }
+    self.bytes.extend_from_slice(bytes);
+    Ok(bytes.len())
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    self.flushed_at.push(self.bytes.len());
+    if self.fail_flush {
+      Err(io::Error::other("frame flush failed"))
+    } else {
+      Ok(())
+    }
+  }
+}
+
+#[test]
+fn synchronized_frame_wraps_all_contents_before_flushing() {
+  let mut output = FrameOutput::default();
+
+  synchronized_frame(&mut output, |frame| {
+    assert_eq!(frame.as_slice(), b"\x1b[?2026h");
+    frame.write_all(b"header")?;
+    frame.write_all(b"listing")?;
+    frame.write_all(b"footer")
+  })
+  .unwrap();
+
+  assert_eq!(output.bytes, b"\x1b[?2026hheaderlistingfooter\x1b[?2026l");
+  assert_eq!(output.writes, vec![output.bytes.len()]);
+  assert_eq!(output.flushed_at, vec![output.bytes.len()]);
+}
+
+#[test]
+fn synchronized_frame_buffers_large_frames_before_writing() {
+  let mut output = FrameOutput::default();
+  let listing = vec![b'x'; 64 * 1024];
+
+  synchronized_frame(&mut output, |frame| {
+    frame.write_all(b"header")?;
+    frame.write_all(&listing)?;
+    frame.flush()?;
+    frame.write_all(b"footer")
+  })
+  .unwrap();
+
+  let expected = [
+    b"\x1b[?2026hheader".as_slice(),
+    listing.as_slice(),
+    b"footer\x1b[?2026l".as_slice(),
+  ]
+  .concat();
+  assert_eq!(output.bytes, expected);
+  assert_eq!(output.writes, vec![expected.len()]);
+  assert_eq!(output.flushed_at, vec![expected.len()]);
+}
+
+#[test]
+fn synchronized_frame_ends_and_propagates_drawing_errors() {
+  let mut output = FrameOutput::default();
+
+  let error = synchronized_frame(&mut output, |output| {
+    output.write_all(b"partial frame")?;
+    Err(io::Error::other("frame drawing failed"))
+  })
+  .unwrap_err();
+
+  assert_eq!(error.to_string(), "frame drawing failed");
+  assert_eq!(output.bytes, b"\x1b[?2026hpartial frame\x1b[?2026l");
+  assert_eq!(output.writes, vec![output.bytes.len()]);
+  assert_eq!(output.flushed_at, vec![output.bytes.len()]);
+}
+
+#[test]
+fn synchronized_frame_propagates_flush_errors() {
+  let mut output = FrameOutput {
+    fail_flush: true,
+    ..FrameOutput::default()
+  };
+
+  let error = synchronized_frame(&mut output, |output| output.write_all(b"frame")).unwrap_err();
+
+  assert_eq!(error.to_string(), "frame flush failed");
+  assert_eq!(output.bytes, b"\x1b[?2026hframe\x1b[?2026l");
+  assert_eq!(output.writes, vec![output.bytes.len()]);
+  assert_eq!(output.flushed_at, vec![output.bytes.len()]);
+}
+
+#[test]
+fn synchronized_frame_propagates_write_errors() {
+  let mut output = FrameOutput {
+    fail_write: true,
+    ..FrameOutput::default()
+  };
+
+  let error = synchronized_frame(&mut output, |frame| frame.write_all(b"frame")).unwrap_err();
+
+  assert_eq!(error.to_string(), "frame write failed");
+  assert!(output.bytes.is_empty());
+  assert_eq!(output.writes, vec![b"\x1b[?2026hframe\x1b[?2026l".len()]);
+  assert!(output.flushed_at.is_empty());
 }
 
 #[test]

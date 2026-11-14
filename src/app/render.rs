@@ -4,6 +4,7 @@ use std::{
 };
 
 use crossterm::{
+  SynchronizedUpdate,
   cursor::MoveTo,
   queue,
   style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
@@ -24,27 +25,103 @@ pub(super) const MAX_ENTRY_LINE_WIDTH: usize = 80;
 const TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
   time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
 
+#[derive(Default)]
+pub(super) struct Renderer {
+  previous: Option<Frame>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Frame {
+  size: (u16, u16),
+  lines: Vec<Line>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Line {
+  text: String,
+  color: Color,
+  selected: bool,
+}
+
+impl Frame {
+  fn new(size: (u16, u16)) -> Self {
+    let line_count = if size.0 == 0 { 0 } else { size.1 as usize };
+    Self {
+      size,
+      lines: vec![
+        Line {
+          text: String::new(),
+          color: Color::Reset,
+          selected: false,
+        };
+        line_count
+      ],
+    }
+  }
+
+  fn set_line(&mut self, row: u16, text: &str, color: Color, selected: bool) {
+    let Some(line) = self.lines.get_mut(row as usize) else {
+      return;
+    };
+    // Do not write the bottom-right cell: autowrap can scroll the whole viewport.
+    let width =
+      (self.size.0 as usize).saturating_sub(usize::from(row == self.size.1.saturating_sub(1)));
+    *line = Line {
+      text: take_display_width(text, width),
+      color,
+      selected,
+    };
+  }
+}
+
+impl Renderer {
+  pub(super) fn draw(&mut self, app: &App, output: &mut Stdout) -> io::Result<()> {
+    self.draw_frame(output, app.frame(terminal::size()?), put_line)
+  }
+
+  fn draw_frame<W: Write>(
+    &mut self,
+    output: &mut W,
+    frame: Frame,
+    mut write_line: impl FnMut(&mut Vec<u8>, u16, &Line) -> io::Result<()>,
+  ) -> io::Result<()> {
+    let previous = self.previous.as_ref().filter(|old| old.size == frame.size);
+    let changed: Vec<_> = frame
+      .lines
+      .iter()
+      .enumerate()
+      .filter(|(row, line)| previous.is_none_or(|old| old.lines.get(*row) != Some(*line)))
+      .collect();
+
+    if !changed.is_empty() {
+      synchronized_frame(output, |output| {
+        for (row, line) in changed {
+          write_line(output, row as u16, line)?;
+        }
+        Ok(())
+      })?;
+    }
+    // A failed draw/write/flush must not make the cache claim the screen is current.
+    self.previous = Some(frame);
+    Ok(())
+  }
+}
+
 impl App {
-  pub(super) fn draw(&self, output: &mut Stdout) -> io::Result<()> {
-    let (width, height) = terminal::size()?;
+  fn frame(&self, size: (u16, u16)) -> Frame {
+    let mut frame = Frame::new(size);
+    let (width, height) = size;
+    if frame.lines.is_empty() {
+      return frame;
+    }
     let width = width as usize;
-    queue!(output, MoveTo(0, 0), Clear(ClearType::All))?;
-    put_line(
-      output,
+    frame.set_line(
       0,
       &format!(" FAST  {}", self.current_dir.display()),
-      width,
-      Color::Cyan,
+      Color::Blue,
       false,
-    )?;
-    put_line(
-      output,
-      1,
-      &self.status_text(),
-      width,
-      Color::DarkGrey,
-      false,
-    )?;
+    );
+    frame.set_line(1, &self.status_text(), Color::Red, false);
 
     let list_height = height.saturating_sub(3) as usize;
     let files_position = self.files_position();
@@ -54,49 +131,36 @@ impl App {
     for row in 0..list_height {
       let row_index = scroll_start + row;
       if files_position == Some(row_index) {
-        put_line(
-          output,
-          row as u16 + 2,
-          " -- Files --",
-          width,
-          Color::DarkGrey,
-          false,
-        )?;
+        frame.set_line(row as u16 + 2, " -- Files --", Color::DarkGrey, false);
         continue;
       }
       let index = row_index.saturating_sub(usize::from(
         files_position.is_some_and(|position| row_index > position),
       ));
       let Some(&entry_index) = self.visible_indices.get(index) else {
-        put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
         continue;
       };
       let Some(entry) = self.entries.get(entry_index) else {
-        put_line(output, row as u16 + 2, "", width, Color::Reset, false)?;
         continue;
       };
       let marker = if index == self.selected { "> " } else { "  " };
       let timestamp = self.timestamp_text(entry);
       let text = format_entry_line(marker, &entry.name, &timestamp, width, name_column_width);
-      put_line(
-        output,
+      frame.set_line(
         row as u16 + 2,
         &text,
-        width,
         Self::entry_color(entry),
         index == self.selected,
-      )?;
+      );
     }
 
-    put_line(
-      output,
+    frame.set_line(
       height.saturating_sub(1),
       &self.footer_text(),
-      width,
       Color::DarkGrey,
       false,
-    )?;
-    output.flush()
+    );
+    frame
   }
 
   pub(super) fn files_position(&self) -> Option<usize> {
@@ -165,16 +229,15 @@ impl App {
 
   fn footer_text(&self) -> String {
     if self.filter_mode {
-      " Type to filter  Tab toggle mode  Backspace edit  Enter keep  Esc clear  Ctrl-C cancel"
-        .to_owned()
+      " Tab toggle mode  Enter apply  Esc clear".to_owned()
     } else if self.filter_query.is_empty() {
       format!(
-        " / filter  Up/Down or j/k  Enter/l open  F files {}  y copy path  Backspace/h parent  r rescan  q select  Esc cancel",
+        " / filter  q select  r rescan  y copy path  F files {}  Esc cancel",
         if self.show_files { "on" } else { "off" }
       )
     } else {
       format!(
-        " / edit filter  Tab toggle mode  Up/Down or j/k  Enter/l open  F files {}  y copy path  Backspace/h parent  r rescan  q select  Esc clear",
+        " / edit filter  q select  r rescan  y copy path  F files {}  Esc clear/cancel",
         if self.show_files { "on" } else { "off" }
       )
     }
@@ -223,6 +286,18 @@ impl App {
       TimestampState::Unavailable => "-".to_owned(),
     }
   }
+}
+
+pub(super) fn synchronized_frame<W: Write>(
+  output: &mut W,
+  draw: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+) -> io::Result<()> {
+  // Complete the buffered frame, including its end marker, even if drawing fails.
+  let mut frame = Vec::new();
+  let result = frame.sync_update(draw)?;
+  output.write_all(&frame)?;
+  output.flush()?;
+  result
 }
 
 pub(super) fn format_timestamp(modified: SystemTime) -> Option<String> {
@@ -285,28 +360,24 @@ fn take_display_width(text: &str, width: usize) -> String {
   result
 }
 
-fn put_line<W: Write>(
-  output: &mut W,
-  row: u16,
-  text: &str,
-  width: usize,
-  color: Color,
-  selected: bool,
-) -> io::Result<()> {
-  let text = take_display_width(text, width);
+fn put_line<W: Write>(output: &mut W, row: u16, line: &Line) -> io::Result<()> {
   queue!(
     output,
     MoveTo(0, row),
     Clear(ClearType::UntilNewLine),
-    SetForegroundColor(color)
+    SetForegroundColor(line.color)
   )?;
-  if selected {
+  if line.selected {
     queue!(output, SetAttribute(Attribute::Reverse))?;
   }
   queue!(
     output,
-    Print(text),
+    Print(&line.text),
     SetAttribute(Attribute::Reset),
     ResetColor
   )
 }
+
+#[cfg(test)]
+#[path = "../../test/render.rs"]
+mod tests;

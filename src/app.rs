@@ -105,14 +105,19 @@ impl App {
   }
 
   pub(crate) fn run(&mut self, output: &mut Stdout) -> io::Result<ExitAction> {
-    self.run_with(output, Self::draw, |scan_active| {
-      // The scan channel cannot wake a terminal read, so poll only while it is active.
-      if scan_active && !event::poll(EVENT_POLL_INTERVAL)? {
-        Ok(None)
-      } else {
-        event::read().map(Some)
-      }
-    })
+    let mut renderer = render::Renderer::default();
+    self.run_with(
+      output,
+      |app, output| renderer.draw(app, output),
+      |scan_active| {
+        // The scan channel cannot wake a terminal read, so poll only while it is active.
+        if scan_active && !event::poll(EVENT_POLL_INTERVAL)? {
+          Ok(None)
+        } else {
+          event::read().map(Some)
+        }
+      },
+    )
   }
 
   fn run_with<W: Write>(
