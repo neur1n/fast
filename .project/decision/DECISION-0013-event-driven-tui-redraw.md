@@ -47,15 +47,19 @@ that idle redraw was the cause of the Windows symptom.
 
 - The 50 ms interval remains relevant to checking scan results; it is no longer
   an unconditional frame interval.
-- Drawing still clears the whole screen on actual redraws. The reported flicker
-  remains unverified, and a further rendering change may be needed if the
-  Windows test shows it persists.
-- See `ISSUE-0002` for the deferred Windows verification and its trigger.
+- At acceptance in `REVIEW-0015`, drawing still cleared the whole screen on
+  actual redraws and the Windows symptom remained unverified.
+- Accepted follow-up `DECISION-0015` now governs changed-line rendering and
+  replaces that rendering consequence; this record's scheduling choice remains
+  in force. `ISSUE-0002` records the human's visual confirmation and resolution,
+  with commit correspondence in `REVIEW-0016`.
 
 ## Affected Record Or Consumer
 
 - `.project/issue/ISSUE-0002-tui-flicker-and-idle-redraw.md`
+- `.project/decision/DECISION-0015-changed-line-tui-rendering.md`
 - `.project/review/REVIEW-0015-tui-redraw-source-organization.md`
+- `.project/review/REVIEW-0016-tui-flicker-and-footer-hints.md`
 - `src/app.rs`
 - `src/app/render.rs`
 - `test/app.rs`
